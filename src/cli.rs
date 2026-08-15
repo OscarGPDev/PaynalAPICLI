@@ -55,6 +55,10 @@ pub enum Commands {
         /// Max threads override (CPUMAX, FULLMAX, or integer)
         #[arg(long)]
         threads: Option<String>,
+
+        /// Environment profile (e.g. local, staging, prod) loads paynal.env.<profile>
+        #[arg(long, short = 'E')]
+        env: Option<String>,
     },
 
     /// Remove a request or routine from the workspace index
@@ -95,6 +99,16 @@ pub enum Commands {
 
     /// Start Model Context Protocol (MCP) server mode for AI Agents
     Mcp,
+
+    /// Import requests from external formats (Postman v2.1, Insomnia v4)
+    Import {
+        /// Path to Postman or Insomnia JSON file
+        file: String,
+
+        /// Output directory for imported YAML collection files
+        #[arg(short, long, default_value = "collections")]
+        out: String,
+    },
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]

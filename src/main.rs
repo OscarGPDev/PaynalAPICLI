@@ -30,8 +30,9 @@ async fn main() -> Result<()> {
             export,
             parallel,
             threads,
+            env,
         } => {
-            commands::execute_exec(path, export, parallel, threads).await?;
+            commands::execute_exec(path, export, parallel, threads, env).await?;
         }
         Commands::Remove { path, clean } => {
             commands::execute_remove(path, clean)?;
@@ -47,6 +48,9 @@ async fn main() -> Result<()> {
         }
         Commands::Mcp => {
             commands::execute_mcp().await?;
+        }
+        Commands::Import { file, out } => {
+            commands::execute_import(file, out)?;
         }
     }
 

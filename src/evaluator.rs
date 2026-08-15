@@ -1,6 +1,7 @@
 use std::collections::HashMap;
-use dotenvy;
 use std::env;
+use std::path::Path;
+use dotenvy;
 
 #[derive(Debug, Clone, Default)]
 pub struct VariableContext {
@@ -8,18 +9,47 @@ pub struct VariableContext {
 }
 
 impl VariableContext {
+    #[allow(dead_code)]
     pub fn new() -> Self {
+        Self::new_with_env(None)
+    }
+
+    pub fn new_with_env(env_profile: Option<&str>) -> Self {
         let mut vars = HashMap::new();
 
-        // 1. Load system environment & paynal.env
-        let _ = dotenvy::from_filename("paynal.env");
-        let _ = dotenvy::dotenv(); // .env fallback
-
+        // 1. Load system environment
         for (k, v) in env::vars() {
             vars.insert(k, v);
         }
 
+        // 2. Load base paynal.env and .env files
+        Self::read_env_file(Path::new("paynal.env"), &mut vars);
+        Self::read_env_file(Path::new(".env"), &mut vars);
+
+        // 3. Load profile-specific env file (e.g. paynal.env.staging) with override priority
+        if let Some(profile) = env_profile {
+            let profile_filename = format!("paynal.env.{}", profile);
+            let fallback_filename = format!(".env.{}", profile);
+
+            let profile_path = Path::new(&profile_filename);
+            if profile_path.exists() {
+                Self::read_env_file(profile_path, &mut vars);
+            } else {
+                Self::read_env_file(Path::new(&fallback_filename), &mut vars);
+            }
+        }
+
         Self { vars }
+    }
+
+    fn read_env_file(path: &Path, vars: &mut HashMap<String, String>) {
+        if path.exists() {
+            if let Ok(iter) = dotenvy::from_path_iter(path) {
+                for (k, v) in iter.flatten() {
+                    vars.insert(k, v);
+                }
+            }
+        }
     }
 
     pub fn set(&mut self, key: impl Into<String>, val: impl Into<String>) {

@@ -13,6 +13,7 @@ pub async fn execute_exec(
     export_override: Option<String>,
     parallel: bool,
     threads_override: Option<String>,
+    env_profile: Option<String>,
 ) -> Result<()> {
     let manifest = PaynalManifest::load_from_dir(Path::new("."))
         .unwrap_or_default();
@@ -70,13 +71,17 @@ pub async fn execute_exec(
         manifest.proxy.as_deref(),
     ));
     let manifest = std::sync::Arc::new(manifest);
+    let env_profile_arc = std::sync::Arc::new(env_profile);
 
     if parallel && files_to_run.len() > 1 {
-        let thread_mode = threads_override
+        let global_ctx = VariableContext::new_with_env(env_profile_arc.as_deref());
+        let raw_thread_mode = threads_override
             .as_deref()
             .unwrap_or(&manifest.max_threads);
 
-        let max_concurrency = match thread_mode {
+        let thread_mode = global_ctx.interpolate(raw_thread_mode);
+
+        let max_concurrency = match thread_mode.trim() {
             "CPUMAX" => num_cpus::get(),
             "FULLMAX" => usize::MAX,
             other => other.parse::<usize>().unwrap_or_else(|_| num_cpus::get()),
@@ -98,6 +103,7 @@ pub async fn execute_exec(
         for file_path in files_to_run {
             let runner_cloned = std::sync::Arc::clone(&runner);
             let manifest_cloned = std::sync::Arc::clone(&manifest);
+            let env_cloned = std::sync::Arc::clone(&env_profile_arc);
             let export_cloned = export_override.clone();
             let sem_cloned = std::sync::Arc::clone(&semaphore);
 
@@ -108,6 +114,7 @@ pub async fn execute_exec(
                     &file_path,
                     &manifest_cloned,
                     export_cloned.as_deref(),
+                    env_cloned.as_ref().as_deref(),
                 )
                 .await
             });
@@ -120,7 +127,14 @@ pub async fn execute_exec(
         }
     } else {
         for file_path in &files_to_run {
-            run_paynal_file(&runner, file_path, &manifest, export_override.as_deref()).await?;
+            run_paynal_file(
+                &runner,
+                file_path,
+                &manifest,
+                export_override.as_deref(),
+                env_profile_arc.as_ref().as_deref(),
+            )
+            .await?;
         }
     }
 
@@ -132,6 +146,7 @@ async fn run_paynal_file(
     file_path: &Path,
     manifest: &PaynalManifest,
     export_override: Option<&str>,
+    env_profile: Option<&str>,
 ) -> Result<()> {
     let content = fs::read_to_string(file_path)
         .with_context(|| format!("Failed to read YAML file {}", file_path.display()))?;
@@ -139,7 +154,7 @@ async fn run_paynal_file(
     let paynal_file: PaynalFile = serde_yaml::from_str(&content)
         .with_context(|| format!("Failed to parse YAML file {}", file_path.display()))?;
 
-    let mut ctx = VariableContext::new();
+    let mut ctx = VariableContext::new_with_env(env_profile);
     ctx.extend(&paynal_file.vars);
 
     let mut export_logs = Vec::new();

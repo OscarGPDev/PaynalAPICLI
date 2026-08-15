@@ -27,7 +27,7 @@ fn default_validate_certificates() -> bool {
 impl Default for PaynalManifest {
     fn default() -> Self {
         Self {
-            project_name: "MyApiWorkspace".to_string(),
+            project_name: "Paynalapicli".to_string(),
             version: "0.1.0".to_string(),
             root_dir: ".".to_string(),
             out_dir: "./output".to_string(),

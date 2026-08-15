@@ -63,22 +63,84 @@ pub fn execute_export(path_str: String, r#type: ExportType) -> Result<()> {
         }
         ExportType::Postman => {
             let out_file = target.with_extension("postman_collection.json");
+            let mut items = Vec::new();
+
+            if paynal_file.is_routine() {
+                for step in &paynal_file.steps {
+                    let step_name = step.name.as_deref().unwrap_or(&step.id);
+                    items.push(serde_json::json!({
+                        "name": step_name,
+                        "request": {
+                            "method": step.request.method,
+                            "url": { "raw": step.request.url },
+                            "header": step.request.headers.iter().map(|(k, v)| serde_json::json!({"key": k, "value": v})).collect::<Vec<_>>(),
+                            "body": {
+                                "mode": "raw",
+                                "raw": step.request.body.as_deref().unwrap_or("")
+                            }
+                        }
+                    }));
+                }
+            } else if let Some(req) = &paynal_file.request {
+                items.push(serde_json::json!({
+                    "name": paynal_file.name,
+                    "request": {
+                        "method": req.method,
+                        "url": { "raw": req.url },
+                        "header": req.headers.iter().map(|(k, v)| serde_json::json!({"key": k, "value": v})).collect::<Vec<_>>(),
+                        "body": {
+                            "mode": "raw",
+                            "raw": req.body.as_deref().unwrap_or("")
+                        }
+                    }
+                }));
+            }
+
             let postman_json = serde_json::json!({
                 "info": {
                     "name": paynal_file.name,
                     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
                 },
-                "item": []
+                "item": items
             });
             fs::write(&out_file, serde_json::to_string_pretty(&postman_json)?)?;
             println!("📦 Exported Postman collection: {}", out_file.display());
         }
         ExportType::Insomnia => {
             let out_file = target.with_extension("insomnia.json");
+            let mut resources = Vec::new();
+
+            if paynal_file.is_routine() {
+                for step in &paynal_file.steps {
+                    let step_name = step.name.as_deref().unwrap_or(&step.id);
+                    resources.push(serde_json::json!({
+                        "_type": "request",
+                        "name": step_name,
+                        "method": step.request.method,
+                        "url": step.request.url,
+                        "headers": step.request.headers.iter().map(|(k, v)| serde_json::json!({"name": k, "value": v})).collect::<Vec<_>>(),
+                        "body": {
+                            "text": step.request.body.as_deref().unwrap_or("")
+                        }
+                    }));
+                }
+            } else if let Some(req) = &paynal_file.request {
+                resources.push(serde_json::json!({
+                    "_type": "request",
+                    "name": paynal_file.name,
+                    "method": req.method,
+                    "url": req.url,
+                    "headers": req.headers.iter().map(|(k, v)| serde_json::json!({"name": k, "value": v})).collect::<Vec<_>>(),
+                    "body": {
+                        "text": req.body.as_deref().unwrap_or("")
+                    }
+                }));
+            }
+
             let insomnia_json = serde_json::json!({
                 "_type": "export",
                 "__export_format": 4,
-                "resources": []
+                "resources": resources
             });
             fs::write(&out_file, serde_json::to_string_pretty(&insomnia_json)?)?;
             println!("📦 Exported Insomnia collection: {}", out_file.display());
