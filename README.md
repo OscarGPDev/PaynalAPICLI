@@ -3,7 +3,7 @@
 > **Lightning-fast, CLI-first API client, routine runner, and AI agent testing engine built in Rust.**
 
 [![Built with Rust](https://img.shields.io/badge/Built_with-Rust-orange.svg)](https://www.rust-lang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPL_v3-blue.svg)](LICENSE)
 
 ---
 
@@ -132,4 +132,4 @@ steps:
 
 ## 🤝 Contributing & License
 
-Paynalapicli is open-source under the [MIT License](LICENSE). Contributions, bug reports, and feature requests are welcome!
+Paynalapicli is open-source under the [GNU General Public License v3.0 (GPL-3.0)](LICENSE). Contributions, bug reports, and feature requests are welcome!
