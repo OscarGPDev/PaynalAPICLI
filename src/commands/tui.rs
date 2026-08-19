@@ -29,6 +29,7 @@ const AZTEC_RUST: Color = Color::Rgb(217, 83, 39);
 const AZTEC_DARK: Color = Color::Rgb(14, 41, 48);
 
 const VERBS: [&str; 7] = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
+const BODY_TYPES: [&str; 7] = ["json", "form", "multipart", "file", "xml", "text", "none"];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TreeItem {
@@ -46,6 +47,7 @@ struct App {
     is_adding: bool,
     add_input: String,
     add_verb_idx: usize,
+    add_body_idx: usize,
     add_is_routine: bool,
     is_confirming_delete: bool,
     is_editing_vars: bool,
@@ -76,6 +78,7 @@ impl App {
             is_adding: false,
             add_input: String::new(),
             add_verb_idx: 0,
+            add_body_idx: 0,
             add_is_routine: false,
             is_confirming_delete: false,
             is_editing_vars: false,
@@ -91,8 +94,19 @@ impl App {
             runner,
         };
 
+        app.sync_add_body_to_verb();
         app.reload_files();
         app
+    }
+
+    fn sync_add_body_to_verb(&mut self) {
+        let verb = VERBS[self.add_verb_idx];
+        let default_type = self._manifest.get_default_body_type(verb);
+        if let Some(idx) = BODY_TYPES.iter().position(|&bt| bt.eq_ignore_ascii_case(&default_type)) {
+            self.add_body_idx = idx;
+        } else {
+            self.add_body_idx = 0;
+        }
     }
 
     fn get_env_filepath(&self) -> PathBuf {
@@ -315,13 +329,26 @@ impl App {
         let input = self.add_input.trim().to_string();
         if !input.is_empty() {
             let verb = VERBS[self.add_verb_idx];
+            let body_type = BODY_TYPES[self.add_body_idx];
             let is_routine = self.add_is_routine || input.contains("--routine");
             let clean_path = input.replace("--routine", "").trim().to_string();
 
-            if let Err(e) = crate::commands::add::execute_add(clean_path.clone(), false, verb.to_string(), is_routine, None) {
+            if let Err(e) = crate::commands::add::execute_add(
+                clean_path.clone(),
+                false,
+                verb.to_string(),
+                is_routine,
+                Some(body_type.to_string()),
+            ) {
                 self.last_response = Some(format!("❌ Failed to create template: {}", e));
             } else {
-                self.last_response = Some(format!("✨ Created {} template [{}] at: collections/{}.yaml", if is_routine { "Routine" } else { "Request" }, verb, clean_path));
+                self.last_response = Some(format!(
+                    "✨ Created {} template [{}, body: {}] at: collections/{}.yaml",
+                    if is_routine { "Routine" } else { "Request" },
+                    verb,
+                    body_type,
+                    clean_path
+                ));
                 self.reload_files();
             }
         }
@@ -535,11 +562,21 @@ impl App {
                     let step_name = step.name.as_deref().unwrap_or(&step.id);
                     let url = ctx.interpolate(&step.request.url);
 
+                    let mut payload_desc = String::new();
+                    if let Some(form) = &step.request.form_data {
+                        let form_lines: Vec<String> = form.iter().map(|(k, v)| format!("    {}: {}", k, v)).collect();
+                        payload_desc = format!("\n  Multipart Form-Data:\n{}\n", form_lines.join("\n"));
+                    } else if let Some(body) = &step.request.body {
+                        if !body.trim().is_empty() {
+                            payload_desc = format!("\n  Payload Body:\n    {}\n", body.trim());
+                        }
+                    }
+
                     match self.runner.execute(&step.request, step.assert.as_ref(), &ctx).await {
                         Ok(res) => {
                             output.push(format!(
-                                "▶ Step: {} [{} {}]\n  Status: {} | Time: {}ms\n  Body:\n{}\n",
-                                step_name, step.request.method, url, res.status, res.duration_ms, res.body
+                                "▶ Step: {} [{} {}]\n  Status: {} | Time: {}ms{}\n  Response Body:\n{}\n",
+                                step_name, step.request.method, url, res.status, res.duration_ms, payload_desc, res.body
                             ));
                             self.runner.extract_captures(&res, &step.capture, &mut ctx);
                         }
@@ -551,11 +588,23 @@ impl App {
                 }
             } else if let Some(req) = &paynal_file.request {
                 let url = ctx.interpolate(&req.url);
+
+                let mut payload_desc = String::new();
+                if let Some(form) = &req.form_data {
+                    let form_lines: Vec<String> = form.iter().map(|(k, v)| format!("    {}: {}", k, v)).collect();
+                    payload_desc = format!("\nMultipart Form-Data:\n{}\n", form_lines.join("\n"));
+                } else if let Some(body) = &req.body {
+                    if !body.trim().is_empty() {
+                        payload_desc = format!("\nPayload Body:\n{}\n", body.trim());
+                    }
+                }
+
                 match self.runner.execute(req, paynal_file.assert.as_ref(), &ctx).await {
                     Ok(res) => {
                         output.push(format!(
-                            "🚀 Request: {} [{} {}]\nStatus: {} | Latency: {}ms\n\nHeaders:\n{}\n\nBody:\n{}",
+                            "🚀 Request: {} [{} {}]\nStatus: {} | Latency: {}ms{}\n\nResponse Headers:\n{}\n\nResponse Body:\n{}",
                             paynal_file.name, req.method, url, res.status, res.duration_ms,
+                            payload_desc,
                             res.headers.iter().map(|(k, v)| format!("{}: {}", k, v.to_str().unwrap_or(""))).collect::<Vec<_>>().join("\n"),
                             res.body
                         ));
@@ -610,6 +659,10 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, app
                             }
                             KeyCode::Tab => {
                                 app.add_verb_idx = (app.add_verb_idx + 1) % VERBS.len();
+                                app.sync_add_body_to_verb();
+                            }
+                            KeyCode::Char('b') | KeyCode::Char('B') => {
+                                app.add_body_idx = (app.add_body_idx + 1) % BODY_TYPES.len();
                             }
                             KeyCode::Char('!') => {
                                 app.add_is_routine = !app.add_is_routine;
@@ -695,6 +748,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, app
                                 app.add_input.clear();
                                 app.add_verb_idx = 0;
                                 app.add_is_routine = false;
+                                app.sync_add_body_to_verb();
                             }
                             KeyCode::Char('e') => {
                                 let _ = app.open_in_editor();
@@ -848,12 +902,15 @@ fn ui(f: &mut Frame, app: &mut App) {
     // 3. Footer Shortcuts / Search status / Add & Delete Prompts
     let footer_text = if app.is_adding {
         let current_verb = VERBS[app.add_verb_idx];
+        let current_body = BODY_TYPES[app.add_body_idx];
         let type_label = if app.add_is_routine { "Routine 🔄" } else { "Request 🚀" };
         vec![Line::from(vec![
             Span::styled(" ➕ ADD TEMPLATE: ", Style::default().fg(AZTEC_GOLD).add_modifier(Modifier::BOLD)),
             Span::styled(format!("{}_ ", app.add_input), Style::default().fg(Color::White)),
             Span::styled(" [Tab] ", Style::default().fg(AZTEC_TEAL).add_modifier(Modifier::BOLD)),
             Span::styled(format!("Verb: {}  ", current_verb), Style::default().fg(AZTEC_GOLD)),
+            Span::styled(" [b] ", Style::default().fg(AZTEC_TEAL).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("Body: {}  ", current_body), Style::default().fg(AZTEC_GOLD)),
             Span::styled(" [!] ", Style::default().fg(AZTEC_TEAL).add_modifier(Modifier::BOLD)),
             Span::styled(format!("Type: {}  ", type_label), Style::default().fg(AZTEC_RUST)),
             Span::styled("[Enter] ", Style::default().fg(AZTEC_TEAL)),
