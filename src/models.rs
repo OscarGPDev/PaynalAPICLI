@@ -26,6 +26,14 @@ impl StringOrVec {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum MatchSpec {
+    Single(String),
+    List(Vec<String>),
+    Map(HashMap<String, String>),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RequestSpec {
     pub method: String,
     pub url: String,
@@ -58,13 +66,19 @@ pub struct AssertSpec {
     pub not_exists: Option<StringOrVec>,
 
     #[serde(default, alias = "bodyContains", alias = "body_contains")]
-    pub contains: Option<StringOrVec>,
+    pub contains: Option<MatchSpec>,
+
+    #[serde(default, alias = "iContains", alias = "icontains", alias = "containsIgnoreCase", alias = "contains_ignore_case")]
+    pub icontains: Option<MatchSpec>,
 
     #[serde(default, alias = "notContains", alias = "not_contains")]
-    pub not_contains: Option<StringOrVec>,
+    pub not_contains: Option<MatchSpec>,
+
+    #[serde(default, alias = "notIcontains", alias = "not_icontains", alias = "notIContains", alias = "notContainsIgnoreCase", alias = "not_contains_ignore_case")]
+    pub not_icontains: Option<MatchSpec>,
 
     #[serde(default)]
-    pub regex: Option<StringOrVec>,
+    pub regex: Option<MatchSpec>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

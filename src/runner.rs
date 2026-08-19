@@ -1,5 +1,5 @@
 use crate::evaluator::VariableContext;
-use crate::models::{AssertSpec, RequestSpec};
+use crate::models::{AssertSpec, MatchSpec, RequestSpec};
 use anyhow::{Context, Result};
 use colored::*;
 use reqwest::{header::HeaderName, Method};
@@ -267,48 +267,354 @@ impl HttpRunner {
                 }
             }
 
-            // 7. Substring contains assertion
+            // 7. Substring contains assertion (body or per-property)
             if let Some(contains_spec) = &asserts.contains {
-                for substr in contains_spec.as_slice() {
-                    let eval_sub = ctx.interpolate(substr);
-                    if body.contains(&eval_sub) {
-                        assert_messages.push(format!("Body contains '{}'", eval_sub));
-                    } else {
-                        asserts_passed = false;
-                        assert_messages.push(format!("Body does NOT contain expected substring '{}'", eval_sub));
+                match contains_spec {
+                    MatchSpec::Single(substr) => {
+                        let eval_sub = ctx.interpolate(substr);
+                        if body.contains(&eval_sub) {
+                            assert_messages.push(format!("Body contains '{}'", eval_sub));
+                        } else {
+                            asserts_passed = false;
+                            assert_messages.push(format!("Body does NOT contain expected substring '{}'", eval_sub));
+                        }
                     }
-                }
-            }
-
-            // 8. Forbidden substring assertion (not_contains)
-            if let Some(not_contains_spec) = &asserts.not_contains {
-                for substr in not_contains_spec.as_slice() {
-                    let eval_sub = ctx.interpolate(substr);
-                    if !body.contains(&eval_sub) {
-                        assert_messages.push(format!("Body does not contain forbidden '{}'", eval_sub));
-                    } else {
-                        asserts_passed = false;
-                        assert_messages.push(format!("Body contains forbidden substring '{}'", eval_sub));
-                    }
-                }
-            }
-
-            // 9. Regex pattern matching assertion
-            if let Some(regex_spec) = &asserts.regex {
-                for pattern in regex_spec.as_slice() {
-                    let eval_pat = ctx.interpolate(pattern);
-                    match regex::Regex::new(&eval_pat) {
-                        Ok(re) => {
-                            if re.is_match(&body) {
-                                assert_messages.push(format!("Body matches regex '{}'", eval_pat));
+                    MatchSpec::List(list) => {
+                        for substr in list {
+                            let eval_sub = ctx.interpolate(substr);
+                            if body.contains(&eval_sub) {
+                                assert_messages.push(format!("Body contains '{}'", eval_sub));
                             } else {
                                 asserts_passed = false;
-                                assert_messages.push(format!("Body does NOT match regex pattern '{}'", eval_pat));
+                                assert_messages.push(format!("Body does NOT contain expected substring '{}'", eval_sub));
                             }
                         }
-                        Err(e) => {
+                    }
+                    MatchSpec::Map(map) => {
+                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&body) {
+                            for (path_expr, expected_sub) in map {
+                                let eval_sub = ctx.interpolate(expected_sub);
+                                let norm_expr = if !path_expr.starts_with('$') {
+                                    format!("$.{}", path_expr)
+                                } else {
+                                    path_expr.clone()
+                                };
+
+                                match jsonpath_lib::select(&json_val, &norm_expr) {
+                                    Ok(results) if !results.is_empty() => {
+                                        let mut matched_any = false;
+                                        for r in &results {
+                                            let val_str = match r {
+                                                serde_json::Value::String(s) => s.clone(),
+                                                other => other.to_string(),
+                                            };
+                                            if val_str.contains(&eval_sub) {
+                                                matched_any = true;
+                                                assert_messages.push(format!("Property '{}' (\"{}\") contains '{}'", norm_expr, val_str, eval_sub));
+                                                break;
+                                            }
+                                        }
+                                        if !matched_any {
+                                            asserts_passed = false;
+                                            let first_val = results.first().map(|v| match v { serde_json::Value::String(s) => s.clone(), other => other.to_string() }).unwrap_or_default();
+                                            assert_messages.push(format!("Property '{}' (\"{}\") does NOT contain '{}'", norm_expr, first_val, eval_sub));
+                                        }
+                                    }
+                                    _ => {
+                                        asserts_passed = false;
+                                        assert_messages.push(format!("Property '{}' not found in response JSON for contains check", norm_expr));
+                                    }
+                                }
+                            }
+                        } else {
                             asserts_passed = false;
-                            assert_messages.push(format!("Invalid regex pattern '{}': {}", eval_pat, e));
+                            assert_messages.push("Response body is not valid JSON for property contains assertion".to_string());
+                        }
+                    }
+                }
+            }
+
+            // 8. Case-insensitive substring contains assertion (icontains, body or per-property)
+            if let Some(icontains_spec) = &asserts.icontains {
+                let lower_body = body.to_lowercase();
+                match icontains_spec {
+                    MatchSpec::Single(substr) => {
+                        let eval_sub = ctx.interpolate(substr);
+                        if lower_body.contains(&eval_sub.to_lowercase()) {
+                            assert_messages.push(format!("Body contains (case-insensitive) '{}'", eval_sub));
+                        } else {
+                            asserts_passed = false;
+                            assert_messages.push(format!("Body does NOT contain (case-insensitive) '{}'", eval_sub));
+                        }
+                    }
+                    MatchSpec::List(list) => {
+                        for substr in list {
+                            let eval_sub = ctx.interpolate(substr);
+                            if lower_body.contains(&eval_sub.to_lowercase()) {
+                                assert_messages.push(format!("Body contains (case-insensitive) '{}'", eval_sub));
+                            } else {
+                                asserts_passed = false;
+                                assert_messages.push(format!("Body does NOT contain (case-insensitive) '{}'", eval_sub));
+                            }
+                        }
+                    }
+                    MatchSpec::Map(map) => {
+                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&body) {
+                            for (path_expr, expected_sub) in map {
+                                let eval_sub = ctx.interpolate(expected_sub);
+                                let norm_expr = if !path_expr.starts_with('$') {
+                                    format!("$.{}", path_expr)
+                                } else {
+                                    path_expr.clone()
+                                };
+
+                                match jsonpath_lib::select(&json_val, &norm_expr) {
+                                    Ok(results) if !results.is_empty() => {
+                                        let mut matched_any = false;
+                                        for r in &results {
+                                            let val_str = match r {
+                                                serde_json::Value::String(s) => s.clone(),
+                                                other => other.to_string(),
+                                            };
+                                            if val_str.to_lowercase().contains(&eval_sub.to_lowercase()) {
+                                                matched_any = true;
+                                                assert_messages.push(format!("Property '{}' (\"{}\") contains (case-insensitive) '{}'", norm_expr, val_str, eval_sub));
+                                                break;
+                                            }
+                                        }
+                                        if !matched_any {
+                                            asserts_passed = false;
+                                            let first_val = results.first().map(|v| match v { serde_json::Value::String(s) => s.clone(), other => other.to_string() }).unwrap_or_default();
+                                            assert_messages.push(format!("Property '{}' (\"{}\") does NOT contain (case-insensitive) '{}'", norm_expr, first_val, eval_sub));
+                                        }
+                                    }
+                                    _ => {
+                                        asserts_passed = false;
+                                        assert_messages.push(format!("Property '{}' not found in response JSON for icontains check", norm_expr));
+                                    }
+                                }
+                            }
+                        } else {
+                            asserts_passed = false;
+                            assert_messages.push("Response body is not valid JSON for property icontains assertion".to_string());
+                        }
+                    }
+                }
+            }
+
+            // 9. Forbidden substring assertion (not_contains, body or per-property)
+            if let Some(not_contains_spec) = &asserts.not_contains {
+                match not_contains_spec {
+                    MatchSpec::Single(substr) => {
+                        let eval_sub = ctx.interpolate(substr);
+                        if !body.contains(&eval_sub) {
+                            assert_messages.push(format!("Body does not contain forbidden '{}'", eval_sub));
+                        } else {
+                            asserts_passed = false;
+                            assert_messages.push(format!("Body contains forbidden substring '{}'", eval_sub));
+                        }
+                    }
+                    MatchSpec::List(list) => {
+                        for substr in list {
+                            let eval_sub = ctx.interpolate(substr);
+                            if !body.contains(&eval_sub) {
+                                assert_messages.push(format!("Body does not contain forbidden '{}'", eval_sub));
+                            } else {
+                                asserts_passed = false;
+                                assert_messages.push(format!("Body contains forbidden substring '{}'", eval_sub));
+                            }
+                        }
+                    }
+                    MatchSpec::Map(map) => {
+                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&body) {
+                            for (path_expr, forbidden_sub) in map {
+                                let eval_sub = ctx.interpolate(forbidden_sub);
+                                let norm_expr = if !path_expr.starts_with('$') {
+                                    format!("$.{}", path_expr)
+                                } else {
+                                    path_expr.clone()
+                                };
+
+                                match jsonpath_lib::select(&json_val, &norm_expr) {
+                                    Ok(results) if !results.is_empty() => {
+                                        let mut found_forbidden = false;
+                                        for r in &results {
+                                            let val_str = match r {
+                                                serde_json::Value::String(s) => s.clone(),
+                                                other => other.to_string(),
+                                            };
+                                            if val_str.contains(&eval_sub) {
+                                                found_forbidden = true;
+                                                asserts_passed = false;
+                                                assert_messages.push(format!("Property '{}' (\"{}\") contains forbidden '{}'", norm_expr, val_str, eval_sub));
+                                                break;
+                                            }
+                                        }
+                                        if !found_forbidden {
+                                            let first_val = results.first().map(|v| match v { serde_json::Value::String(s) => s.clone(), other => other.to_string() }).unwrap_or_default();
+                                            assert_messages.push(format!("Property '{}' (\"{}\") does not contain forbidden '{}' (as expected)", norm_expr, first_val, eval_sub));
+                                        }
+                                    }
+                                    _ => {
+                                        assert_messages.push(format!("Property '{}' is absent, forbidden substring not present (as expected)", norm_expr));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 10. Case-insensitive forbidden substring assertion (not_icontains, body or per-property)
+            if let Some(not_icontains_spec) = &asserts.not_icontains {
+                let lower_body = body.to_lowercase();
+                match not_icontains_spec {
+                    MatchSpec::Single(substr) => {
+                        let eval_sub = ctx.interpolate(substr);
+                        if !lower_body.contains(&eval_sub.to_lowercase()) {
+                            assert_messages.push(format!("Body does not contain forbidden (case-insensitive) '{}'", eval_sub));
+                        } else {
+                            asserts_passed = false;
+                            assert_messages.push(format!("Body contains forbidden (case-insensitive) '{}'", eval_sub));
+                        }
+                    }
+                    MatchSpec::List(list) => {
+                        for substr in list {
+                            let eval_sub = ctx.interpolate(substr);
+                            if !lower_body.contains(&eval_sub.to_lowercase()) {
+                                assert_messages.push(format!("Body does not contain forbidden (case-insensitive) '{}'", eval_sub));
+                            } else {
+                                asserts_passed = false;
+                                assert_messages.push(format!("Body contains forbidden (case-insensitive) '{}'", eval_sub));
+                            }
+                        }
+                    }
+                    MatchSpec::Map(map) => {
+                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&body) {
+                            for (path_expr, forbidden_sub) in map {
+                                let eval_sub = ctx.interpolate(forbidden_sub);
+                                let norm_expr = if !path_expr.starts_with('$') {
+                                    format!("$.{}", path_expr)
+                                } else {
+                                    path_expr.clone()
+                                };
+
+                                match jsonpath_lib::select(&json_val, &norm_expr) {
+                                    Ok(results) if !results.is_empty() => {
+                                        let mut found_forbidden = false;
+                                        for r in &results {
+                                            let val_str = match r {
+                                                serde_json::Value::String(s) => s.clone(),
+                                                other => other.to_string(),
+                                            };
+                                            if val_str.to_lowercase().contains(&eval_sub.to_lowercase()) {
+                                                found_forbidden = true;
+                                                asserts_passed = false;
+                                                assert_messages.push(format!("Property '{}' (\"{}\") contains forbidden (case-insensitive) '{}'", norm_expr, val_str, eval_sub));
+                                                break;
+                                            }
+                                        }
+                                        if !found_forbidden {
+                                            let first_val = results.first().map(|v| match v { serde_json::Value::String(s) => s.clone(), other => other.to_string() }).unwrap_or_default();
+                                            assert_messages.push(format!("Property '{}' (\"{}\") does not contain forbidden (case-insensitive) '{}' (as expected)", norm_expr, first_val, eval_sub));
+                                        }
+                                    }
+                                    _ => {
+                                        assert_messages.push(format!("Property '{}' is absent, forbidden substring not present (as expected)", norm_expr));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 9. Regex pattern matching assertion (body or per-property)
+            if let Some(regex_spec) = &asserts.regex {
+                match regex_spec {
+                    MatchSpec::Single(pattern) => {
+                        let eval_pat = ctx.interpolate(pattern);
+                        match regex::Regex::new(&eval_pat) {
+                            Ok(re) => {
+                                if re.is_match(&body) {
+                                    assert_messages.push(format!("Body matches regex '{}'", eval_pat));
+                                } else {
+                                    asserts_passed = false;
+                                    assert_messages.push(format!("Body does NOT match regex pattern '{}'", eval_pat));
+                                }
+                            }
+                            Err(e) => {
+                                asserts_passed = false;
+                                assert_messages.push(format!("Invalid regex pattern '{}': {}", eval_pat, e));
+                            }
+                        }
+                    }
+                    MatchSpec::List(list) => {
+                        for pattern in list {
+                            let eval_pat = ctx.interpolate(pattern);
+                            match regex::Regex::new(&eval_pat) {
+                                Ok(re) => {
+                                    if re.is_match(&body) {
+                                        assert_messages.push(format!("Body matches regex '{}'", eval_pat));
+                                    } else {
+                                        asserts_passed = false;
+                                        assert_messages.push(format!("Body does NOT match regex pattern '{}'", eval_pat));
+                                    }
+                                }
+                                Err(e) => {
+                                    asserts_passed = false;
+                                    assert_messages.push(format!("Invalid regex pattern '{}': {}", eval_pat, e));
+                                }
+                            }
+                        }
+                    }
+                    MatchSpec::Map(map) => {
+                        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&body) {
+                            for (path_expr, pattern) in map {
+                                let eval_pat = ctx.interpolate(pattern);
+                                let norm_expr = if !path_expr.starts_with('$') {
+                                    format!("$.{}", path_expr)
+                                } else {
+                                    path_expr.clone()
+                                };
+
+                                match regex::Regex::new(&eval_pat) {
+                                    Ok(re) => {
+                                        match jsonpath_lib::select(&json_val, &norm_expr) {
+                                            Ok(results) if !results.is_empty() => {
+                                                let mut matched_any = false;
+                                                for r in &results {
+                                                    let val_str = match r {
+                                                        serde_json::Value::String(s) => s.clone(),
+                                                        other => other.to_string(),
+                                                    };
+                                                    if re.is_match(&val_str) {
+                                                        matched_any = true;
+                                                        assert_messages.push(format!("Property '{}' (\"{}\") matches regex '{}'", norm_expr, val_str, eval_pat));
+                                                        break;
+                                                    }
+                                                }
+                                                if !matched_any {
+                                                    asserts_passed = false;
+                                                    let first_val = results.first().map(|v| match v { serde_json::Value::String(s) => s.clone(), other => other.to_string() }).unwrap_or_default();
+                                                    assert_messages.push(format!("Property '{}' (\"{}\") does NOT match regex '{}'", norm_expr, first_val, eval_pat));
+                                                }
+                                            }
+                                            _ => {
+                                                asserts_passed = false;
+                                                assert_messages.push(format!("Property '{}' not found in response JSON for regex check", norm_expr));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        asserts_passed = false;
+                                        assert_messages.push(format!("Invalid regex pattern '{}': {}", eval_pat, e));
+                                    }
+                                }
+                            }
+                        } else {
+                            asserts_passed = false;
+                            assert_messages.push("Response body is not valid JSON for property regex assertion".to_string());
                         }
                     }
                 }

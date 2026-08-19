@@ -187,19 +187,25 @@ assert:
     - "password"
     - "secretKey"
 
-  # 7. Substring Matching in Response Body
+  # 7. Substring Matching (Full Body or Per-Property, Case-Sensitive)
   contains:
-    - "Welcome back"
+    "$.user.name": "John"      # Exact case substring
+    "$.user.email": "@company.com"
+  # Or for full body: contains: ["Welcome back", "Success"]
 
-  # 8. Forbidden Substring Check
+  # 8. Case-Insensitive Substring Matching (Full Body or Per-Property)
+  icontains:
+    "$.user.name": "john"      # Matches "John Doe", "JOHN CENA", "john"
+
+  # 9. Forbidden Substring Check (Full Body or Per-Property)
   notContains:
-    - "Internal Server Error"
-    - "Stack trace"
+    "$.user.role": "admin"     # Fails if role contains "admin" (case-sensitive)
+  # Or case-insensitive: notIcontains: { "$.user.role": "admin" }
 
-  # 9. Regular Expression Matching
+  # 10. Regular Expression Matching (Full Body or Per-Property)
   regex:
-    - "^\\{.*\\}$"
-    - "jwt-[a-zA-Z0-9]+"
+    "$.user.email": "^[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}$"
+  # Or for full body: regex: ["^\\{.*\\}$", "jwt-[a-zA-Z0-9]+"]
 ```
 
 ---
