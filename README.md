@@ -36,6 +36,8 @@ Furthermore, popular API clients increasingly lock basic collaboration features 
 - 🛡️ **Certificates & Proxy Control**: Toggle SSL verification (`validateCertificates`) and route traffic through HTTP/SOCKS5 proxies.
 - 📝 **Auto-Documentation Generator**: Generate clean Markdown documentation (`paynal doc`) for routines with input/output fields.
 - 📦 **Multi-Format Exporters**: Export collections to `cURL` shell scripts, `Postman v2.1`, or `Insomnia` formats.
+- 📁 **File & Multipart Uploads**: Send raw binary files with `@file` syntax or upload multi-part form data and attachments via `formData:`.
+- 🎨 **Terminal UI Dashboard**: Launch interactive TUI (`paynal ui` or `paynal tui`) with collection search (`/`), folder expand/collapse tree (`o` / `←` / `→`), template creation (`a`), external text editor launch (`e`), local file variable editor (`v`), environment profile manager (`E`), and full collection execution (`p` for parallel / `Enter` for sequential).
 - 🤖 **Native AI Agent Integration (MCP)**: Run `paynal mcp` to connect AI assistants directly via Model Context Protocol.
 
 ---
@@ -50,8 +52,11 @@ Generates `paynal.json`, `paynal.env`, `collections/`, and `output/`.
 
 ### 2. Add Requests or Multi-Step Routines
 ```bash
-# Add a single POST request
+# Add a single POST request (auto-generates JSON body template by default)
 paynal add auth/login --type post
+
+# Add a request with custom body template (json, form, text, xml, none)
+paynal add auth/oauth --type post --body form
 
 # Add a multi-step routine template
 paynal add auth/e2e_circuit --routine
@@ -112,6 +117,39 @@ steps:
       status: 200
 ```
 
+### 📁 File & Multipart Uploads
+
+Paynal supports both raw binary file streaming and multipart form uploads:
+
+```yaml
+# 1. Multipart Form Data with File Attachment
+version: "1"
+name: "upload_user_profile"
+request:
+  method: "POST"
+  url: "${baseUrl}/users/profile"
+  formData:
+    username: "oscar"
+    bio: "Developer & Creator"
+    avatar: "@./assets/avatar.png"   # Attached as multipart file part
+assert:
+  status: 200
+```
+
+```yaml
+# 2. Raw Binary Stream Upload
+version: "1"
+name: "upload_raw_image"
+request:
+  method: "POST"
+  url: "${baseUrl}/media/upload"
+  headers:
+    Content-Type: "image/png"
+  body: "@./assets/avatar.png"       # Streams raw binary bytes directly
+assert:
+  status: 200
+```
+
 ---
 
 ## 🛠️ Commands Overview
@@ -119,13 +157,14 @@ steps:
 | Command | Description |
 | :--- | :--- |
 | `paynal init` | Initializes `paynal.json` manifest and directory structure. |
-| `paynal add <path>` | Creates a single request or routine template (`--routine`, `--type`). |
+| `paynal add <path>` | Creates a single request or routine template (`--routine`, `--type`, `-b`/`--body`). |
 | `paynal exec <path>` | Runs a request, routine, or folder (`--parallel`, `--export`, `--threads`). |
 | `paynal remove <path>` | Unlinks or permanently deletes files (`--clean`). |
 | `paynal clean <target>` | Sweeps output directory or orphan workspace files (`project` \| `out`). |
 | `paynal doc <path>` | Generates human-readable Markdown docs (`--IO "field:type:desc"`). |
 | `paynal export <path>` | Exports to `curl`, `postman`, or `insomnia` formats (`--type`). |
 | `paynal import <file>` | Imports requests from `postman` v2.1 or `insomnia` v4 JSON files (`--out`). |
+| `paynal ui` \| `tui` | Launches interactive Terminal User Interface (TUI) dashboard (`-E env`). |
 | `paynal mcp` | Starts Model Context Protocol stdio server for AI agents. |
 
 ---

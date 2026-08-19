@@ -3,6 +3,7 @@ use crate::models::{AssertSpec, RequestSpec};
 use anyhow::{Context, Result};
 use colored::*;
 use reqwest::{header::HeaderName, Method};
+use std::path::Path;
 use std::str::FromStr;
 use std::time::Instant;
 
@@ -64,11 +65,50 @@ impl HttpRunner {
             }
         }
 
-        // Add body if present
-        if let Some(body_raw) = &request.body {
+        // Add multipart form-data if present
+        if let Some(form_fields) = &request.form_data {
+            let mut form = reqwest::multipart::Form::new();
+            for (k, v) in form_fields {
+                let field_key = ctx.interpolate(k);
+                let field_val = ctx.interpolate(v);
+
+                if field_val.starts_with('@') {
+                    let file_path_str = field_val.trim_start_matches('@').trim();
+                    let file_path = Path::new(file_path_str);
+                    if !file_path.exists() {
+                        anyhow::bail!("Multipart file not found: {}", file_path_str);
+                    }
+                    let file_bytes = std::fs::read(file_path)
+                        .with_context(|| format!("Failed to read file for multipart upload: {}", file_path_str))?;
+                    let file_name = file_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("file")
+                        .to_string();
+
+                    let part = reqwest::multipart::Part::bytes(file_bytes)
+                        .file_name(file_name);
+                    form = form.part(field_key, part);
+                } else {
+                    form = form.text(field_key, field_val);
+                }
+            }
+            req_builder = req_builder.multipart(form);
+        } else if let Some(body_raw) = &request.body {
             if !body_raw.is_empty() {
                 let interpolated_body = ctx.interpolate(body_raw);
-                req_builder = req_builder.body(interpolated_body);
+                if interpolated_body.starts_with('@') {
+                    let file_path_str = interpolated_body.trim_start_matches('@').trim();
+                    let file_path = Path::new(file_path_str);
+                    if !file_path.exists() {
+                        anyhow::bail!("Binary file not found for upload: {}", file_path_str);
+                    }
+                    let file_bytes = std::fs::read(file_path)
+                        .with_context(|| format!("Failed to read binary file for upload: {}", file_path_str))?;
+                    req_builder = req_builder.body(file_bytes);
+                } else {
+                    req_builder = req_builder.body(interpolated_body);
+                }
             }
         }
 

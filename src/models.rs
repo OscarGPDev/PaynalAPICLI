@@ -9,6 +9,8 @@ pub struct RequestSpec {
     pub headers: HashMap<String, String>,
     #[serde(default)]
     pub body: Option<String>,
+    #[serde(default, alias = "formData", alias = "form_data")]
+    pub form_data: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

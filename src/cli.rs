@@ -37,6 +37,10 @@ pub enum Commands {
         /// Create a multi-step routine template instead of a single request
         #[arg(long, default_value_t = false)]
         routine: bool,
+
+        /// Body template type override (json, form, text, xml, none)
+        #[arg(short = 'b', long = "body", alias = "body-type")]
+        body: Option<String>,
     },
 
     /// Execute a request, routine, or an entire collection folder
@@ -108,6 +112,14 @@ pub enum Commands {
         /// Output directory for imported YAML collection files
         #[arg(short, long, default_value = "collections")]
         out: String,
+    },
+
+    /// Launch interactive Terminal User Interface (TUI) dashboard
+    #[command(alias = "tui")]
+    Ui {
+        /// Environment profile (e.g. local, staging, prod)
+        #[arg(long, short = 'E')]
+        env: Option<String>,
     },
 }
 

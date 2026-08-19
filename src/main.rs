@@ -22,8 +22,9 @@ async fn main() -> Result<()> {
             get,
             r#type,
             routine,
+            body,
         } => {
-            commands::add::execute_add(path, get, r#type, routine)?;
+            commands::add::execute_add(path, get, r#type, routine, body)?;
         }
         Commands::Exec {
             path,
@@ -51,6 +52,9 @@ async fn main() -> Result<()> {
         }
         Commands::Import { file, out } => {
             commands::execute_import(file, out)?;
+        }
+        Commands::Ui { env } => {
+            commands::execute_tui(env).await?;
         }
     }
 

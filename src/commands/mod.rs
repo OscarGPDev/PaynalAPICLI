@@ -7,6 +7,7 @@ pub mod import_cmd;
 pub mod init;
 pub mod mcp;
 pub mod remove;
+pub mod tui;
 
 pub use clean::execute_clean;
 pub use doc::execute_doc;
@@ -15,3 +16,4 @@ pub use export::execute_export;
 pub use import_cmd::execute_import;
 pub use mcp::execute_mcp;
 pub use remove::execute_remove;
+pub use tui::execute_tui;
