@@ -152,6 +152,58 @@ assert:
 
 ---
 
+## 🧪 Assertions Reference
+
+Paynal includes a comprehensive testing and validation engine:
+
+```yaml
+assert:
+  # 1. HTTP Status Code
+  status: 200
+
+  # 2. Maximum Response Latency (in milliseconds)
+  maxDuration: 500
+
+  # 3. Response Headers Validation
+  headers:
+    Content-Type: "application/json"
+    X-Custom-Header: "${EXPECTED_HEADER}"
+
+  # 4. JSONPath Exact Value Validation
+  json:
+    "$.status": "success"
+    "$.authenticated": true
+    "$.data.user.id": "${EXPECTED_USER_ID}"
+
+  # 5. JSON Property Presence (passes even if value is null or empty string)
+  exists:
+    - "$.data.user.id"
+    - "$.meta.pagination"
+    - "token"              # Auto-prepends $. if omitted
+
+  # 6. JSON Property Absence (fails if property is returned)
+  notExists:
+    - "$.error"
+    - "password"
+    - "secretKey"
+
+  # 7. Substring Matching in Response Body
+  contains:
+    - "Welcome back"
+
+  # 8. Forbidden Substring Check
+  notContains:
+    - "Internal Server Error"
+    - "Stack trace"
+
+  # 9. Regular Expression Matching
+  regex:
+    - "^\\{.*\\}$"
+    - "jwt-[a-zA-Z0-9]+"
+```
+
+---
+
 ## 🛠️ Commands Overview
 
 | Command | Description |

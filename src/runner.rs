@@ -129,6 +129,7 @@ impl HttpRunner {
         let mut assert_messages = Vec::new();
 
         if let Some(asserts) = assert_spec {
+            // 1. Status code assertion
             if let Some(expected_status) = asserts.status {
                 if status == expected_status {
                     assert_messages.push(format!("Status code {} == {}", status, expected_status));
@@ -138,34 +139,178 @@ impl HttpRunner {
                 }
             }
 
+            // 2. Max duration (latency) assertion
+            if let Some(max_ms) = asserts.max_duration_ms {
+                if duration_ms <= max_ms {
+                    assert_messages.push(format!("Latency {} ms <= {} ms", duration_ms, max_ms));
+                } else {
+                    asserts_passed = false;
+                    assert_messages.push(format!("Latency {} ms exceeded maximum {} ms", duration_ms, max_ms));
+                }
+            }
+
+            // 3. Response Headers assertion
+            if let Some(expected_headers) = &asserts.headers {
+                for (k, v) in expected_headers {
+                    let eval_key = ctx.interpolate(k);
+                    let eval_val = ctx.interpolate(v);
+
+                    let found_header = headers.iter().find(|(h_name, _)| h_name.as_str().eq_ignore_ascii_case(&eval_key));
+                    match found_header {
+                        Some((_, val)) => {
+                            let actual_val = val.to_str().unwrap_or("");
+                            if actual_val == eval_val {
+                                assert_messages.push(format!("Header '{}' == '{}'", eval_key, eval_val));
+                            } else {
+                                asserts_passed = false;
+                                assert_messages.push(format!("Header '{}' mismatch: got '{}', expected '{}'", eval_key, actual_val, eval_val));
+                            }
+                        }
+                        None => {
+                            asserts_passed = false;
+                            assert_messages.push(format!("Header '{}' not found in response", eval_key));
+                        }
+                    }
+                }
+            }
+
+            // 4. JSON value assertions (JSONPath)
             if let Some(json_asserts) = &asserts.json {
                 if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&body) {
                     for (jsonpath_expr, expected_val) in json_asserts {
+                        let norm_expr = if !jsonpath_expr.starts_with('$') {
+                            format!("$.{}", jsonpath_expr)
+                        } else {
+                            jsonpath_expr.clone()
+                        };
                         let eval_expected = match expected_val {
                             serde_json::Value::String(s) => serde_json::Value::String(ctx.interpolate(s)),
                             other => other.clone(),
                         };
 
-                        if let Ok(results) = jsonpath_lib::select(&json_val, jsonpath_expr) {
+                        if let Ok(results) = jsonpath_lib::select(&json_val, &norm_expr) {
                             if let Some(first) = results.first() {
                                 if *first == &eval_expected {
-                                    assert_messages.push(format!("JSONPath {} == {:?}", jsonpath_expr, eval_expected));
+                                    assert_messages.push(format!("JSONPath {} == {:?}", norm_expr, eval_expected));
                                 } else {
                                     asserts_passed = false;
-                                    assert_messages.push(format!("JSONPath {} mismatch: got {:?}, expected {:?}", jsonpath_expr, first, eval_expected));
+                                    assert_messages.push(format!("JSONPath {} mismatch: got {:?}, expected {:?}", norm_expr, first, eval_expected));
                                 }
                             } else {
                                 asserts_passed = false;
-                                assert_messages.push(format!("JSONPath {} not found in response", jsonpath_expr));
+                                assert_messages.push(format!("JSONPath {} not found in response", norm_expr));
                             }
                         } else {
                             asserts_passed = false;
-                            assert_messages.push(format!("Invalid JSONPath expression: {}", jsonpath_expr));
+                            assert_messages.push(format!("Invalid JSONPath expression: {}", norm_expr));
                         }
                     }
                 } else {
                     asserts_passed = false;
-                    assert_messages.push("Response body is not valid JSON for assertions".to_string());
+                    assert_messages.push("Response body is not valid JSON for json value assertions".to_string());
+                }
+            }
+
+            // 5. JSON property existence assertion (exists / present)
+            if let Some(exists_spec) = &asserts.exists {
+                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&body) {
+                    for expr in exists_spec.as_slice() {
+                        let eval_expr = ctx.interpolate(expr);
+                        let norm_expr = if !eval_expr.starts_with('$') {
+                            format!("$.{}", eval_expr)
+                        } else {
+                            eval_expr
+                        };
+
+                        match jsonpath_lib::select(&json_val, &norm_expr) {
+                            Ok(results) if !results.is_empty() => {
+                                assert_messages.push(format!("Property '{}' exists in response JSON", norm_expr));
+                            }
+                            _ => {
+                                asserts_passed = false;
+                                assert_messages.push(format!("Property '{}' was NOT found in response JSON", norm_expr));
+                            }
+                        }
+                    }
+                } else {
+                    asserts_passed = false;
+                    assert_messages.push("Response body is not valid JSON for exists assertion".to_string());
+                }
+            }
+
+            // 6. JSON property absence assertion (not_exists / missing)
+            if let Some(not_exists_spec) = &asserts.not_exists {
+                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&body) {
+                    for expr in not_exists_spec.as_slice() {
+                        let eval_expr = ctx.interpolate(expr);
+                        let norm_expr = if !eval_expr.starts_with('$') {
+                            format!("$.{}", eval_expr)
+                        } else {
+                            eval_expr
+                        };
+
+                        match jsonpath_lib::select(&json_val, &norm_expr) {
+                            Ok(results) if results.is_empty() => {
+                                assert_messages.push(format!("Property '{}' is absent in response JSON (as expected)", norm_expr));
+                            }
+                            Ok(results) => {
+                                asserts_passed = false;
+                                assert_messages.push(format!("Property '{}' is present in response JSON ({:?}), but expected to be absent", norm_expr, results.first()));
+                            }
+                            Err(_) => {
+                                assert_messages.push(format!("Property '{}' is absent in response JSON (as expected)", norm_expr));
+                            }
+                        }
+                    }
+                } else {
+                    assert_messages.push("Response body is non-JSON, property absent (as expected)".to_string());
+                }
+            }
+
+            // 7. Substring contains assertion
+            if let Some(contains_spec) = &asserts.contains {
+                for substr in contains_spec.as_slice() {
+                    let eval_sub = ctx.interpolate(substr);
+                    if body.contains(&eval_sub) {
+                        assert_messages.push(format!("Body contains '{}'", eval_sub));
+                    } else {
+                        asserts_passed = false;
+                        assert_messages.push(format!("Body does NOT contain expected substring '{}'", eval_sub));
+                    }
+                }
+            }
+
+            // 8. Forbidden substring assertion (not_contains)
+            if let Some(not_contains_spec) = &asserts.not_contains {
+                for substr in not_contains_spec.as_slice() {
+                    let eval_sub = ctx.interpolate(substr);
+                    if !body.contains(&eval_sub) {
+                        assert_messages.push(format!("Body does not contain forbidden '{}'", eval_sub));
+                    } else {
+                        asserts_passed = false;
+                        assert_messages.push(format!("Body contains forbidden substring '{}'", eval_sub));
+                    }
+                }
+            }
+
+            // 9. Regex pattern matching assertion
+            if let Some(regex_spec) = &asserts.regex {
+                for pattern in regex_spec.as_slice() {
+                    let eval_pat = ctx.interpolate(pattern);
+                    match regex::Regex::new(&eval_pat) {
+                        Ok(re) => {
+                            if re.is_match(&body) {
+                                assert_messages.push(format!("Body matches regex '{}'", eval_pat));
+                            } else {
+                                asserts_passed = false;
+                                assert_messages.push(format!("Body does NOT match regex pattern '{}'", eval_pat));
+                            }
+                        }
+                        Err(e) => {
+                            asserts_passed = false;
+                            assert_messages.push(format!("Invalid regex pattern '{}': {}", eval_pat, e));
+                        }
+                    }
                 }
             }
         }
