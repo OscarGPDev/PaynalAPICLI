@@ -31,19 +31,20 @@ pub enum Commands {
         get: bool,
 
         /// HTTP Method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)
-        #[arg(short, long, default_value = "GET")]
+        #[arg(short, long, short_alias = 'm', short_alias = 'X', alias = "method", default_value = "GET")]
         r#type: String,
 
         /// Create a multi-step routine template instead of a single request
         #[arg(long, default_value_t = false)]
         routine: bool,
 
-        /// Body template type override (json, form, text, xml, none)
+        /// Body template type override (json, form, multipart, file, text, xml, none)
         #[arg(short = 'b', long = "body", alias = "body-type")]
         body: Option<String>,
     },
 
     /// Execute a request, routine, or an entire collection folder
+    #[command(alias = "run")]
     Exec {
         /// Target request, routine, or collection directory
         path: String,
@@ -66,6 +67,7 @@ pub enum Commands {
     },
 
     /// Remove a request or routine from the workspace index
+    #[command(alias = "rm", alias = "del", alias = "delete")]
     Remove {
         /// Target request or routine path
         path: String,
@@ -87,7 +89,7 @@ pub enum Commands {
         path: String,
 
         /// Add Input/Output fields in "field:type:Description" format
-        #[arg(long = "IO", value_delimiter = ',')]
+        #[arg(long = "io", alias = "IO", value_delimiter = ',')]
         io: Vec<String>,
     },
 
@@ -97,7 +99,7 @@ pub enum Commands {
         path: String,
 
         /// Format type to export to
-        #[arg(short, long, value_enum)]
+        #[arg(short, long, alias = "format", alias = "to", value_enum)]
         r#type: ExportType,
     },
 
@@ -126,6 +128,7 @@ pub enum Commands {
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CleanTarget {
     Project,
+    #[value(alias = "output", alias = "logs", alias = "temp")]
     Out,
 }
 
