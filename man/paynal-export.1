@@ -1,0 +1,31 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH paynal-export 1  "export " 
+.SH NAME
+paynal\-export \- Export requests or collections to standard formats (curl, insomnia, postman)
+.SH SYNOPSIS
+\fBpaynal export\fR <\fB\-t\fR|\fB\-\-type\fR> [\fB\-h\fR|\fB\-\-help\fR] <\fIPATH\fR> 
+.SH DESCRIPTION
+Export requests or collections to standard formats (curl, insomnia, postman)
+.SH OPTIONS
+.TP
+\fB\-t\fR, \fB\-\-type\fR \fI<TYPE>\fR
+Format type to export to
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+curl
+.IP \(bu 2
+insomnia
+.IP \(bu 2
+postman
+.RE
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIPATH\fR>
+Target request, routine, or collection folder

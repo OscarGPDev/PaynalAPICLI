@@ -56,6 +56,9 @@ async fn main() -> Result<()> {
         Commands::Ui { env } => {
             commands::execute_tui(env).await?;
         }
+        Commands::Man { subcommand, out } => {
+            commands::execute_man(subcommand, out)?;
+        }
     }
 
     Ok(())

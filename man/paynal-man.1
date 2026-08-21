@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH paynal-man 1  "man " 
+.SH NAME
+paynal\-man \- View or generate UNIX man page documentation
+.SH SYNOPSIS
+\fBpaynal man\fR [\fB\-o\fR|\fB\-\-out\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fISUBCOMMAND\fR] 
+.SH DESCRIPTION
+View or generate UNIX man page documentation
+.SH OPTIONS
+.TP
+\fB\-o\fR, \fB\-\-out\fR \fI<OUT>\fR
+Optional output directory to save roff .1 man page file(s)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fISUBCOMMAND\fR]
+Optional subcommand to view manual for (e.g. exec, add, doc)

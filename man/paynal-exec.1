@@ -1,0 +1,28 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH paynal-exec 1  "exec " 
+.SH NAME
+paynal\-exec \- Execute a request, routine, or an entire collection folder
+.SH SYNOPSIS
+\fBpaynal exec\fR [\fB\-e\fR|\fB\-\-export\fR] [\fB\-\-parallel\fR] [\fB\-\-threads\fR] [\fB\-E\fR|\fB\-\-env\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPATH\fR> 
+.SH DESCRIPTION
+Execute a request, routine, or an entire collection folder
+.SH OPTIONS
+.TP
+\fB\-e\fR, \fB\-\-export\fR \fI<EXPORT>\fR
+Custom export output file path
+.TP
+\fB\-\-parallel\fR
+Run requests in parallel when executing a collection folder
+.TP
+\fB\-\-threads\fR \fI<THREADS>\fR
+Max threads override (CPUMAX, FULLMAX, or integer)
+.TP
+\fB\-E\fR, \fB\-\-env\fR \fI<ENV>\fR
+Environment profile (e.g. local, staging, prod) loads paynal.env.<profile>
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIPATH\fR>
+Target request, routine, or collection directory

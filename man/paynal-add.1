@@ -1,0 +1,28 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH paynal-add 1  "add " 
+.SH NAME
+paynal\-add \- Add a new request or routine YAML template
+.SH SYNOPSIS
+\fBpaynal add\fR [\fB\-\-get\fR] [\fB\-t\fR|\fB\-\-type\fR] [\fB\-\-routine\fR] [\fB\-b\fR|\fB\-\-body\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPATH\fR> 
+.SH DESCRIPTION
+Add a new request or routine YAML template
+.SH OPTIONS
+.TP
+\fB\-\-get\fR
+Shortcut for HTTP GET method
+.TP
+\fB\-t\fR, \fB\-\-type\fR \fI<TYPE>\fR [default: GET]
+HTTP Method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)
+.TP
+\fB\-\-routine\fR
+Create a multi\-step routine template instead of a single request
+.TP
+\fB\-b\fR, \fB\-\-body\fR \fI<BODY>\fR
+Body template type override (json, form, multipart, file, text, xml, none)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIPATH\fR>
+Target path in collection (e.g. collectionName/folder1/requestName)

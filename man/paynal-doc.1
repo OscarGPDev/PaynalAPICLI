@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH paynal-doc 1  "doc " 
+.SH NAME
+paynal\-doc \- Generate Markdown documentation for a request or routine
+.SH SYNOPSIS
+\fBpaynal doc\fR [\fB\-\-io\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPATH\fR> 
+.SH DESCRIPTION
+Generate Markdown documentation for a request or routine
+.SH OPTIONS
+.TP
+\fB\-\-io\fR \fI<IO>\fR
+Add Input/Output fields in "field:type:Description" format
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIPATH\fR>
+Target request, routine, or collection folder

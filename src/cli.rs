@@ -123,6 +123,16 @@ pub enum Commands {
         #[arg(long, short = 'E')]
         env: Option<String>,
     },
+
+    /// View or generate UNIX man page documentation
+    Man {
+        /// Optional subcommand to view manual for (e.g. exec, add, doc)
+        subcommand: Option<String>,
+
+        /// Optional output directory to save roff .1 man page file(s)
+        #[arg(short, long)]
+        out: Option<String>,
+    },
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]

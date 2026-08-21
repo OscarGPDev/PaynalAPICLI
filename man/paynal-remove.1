@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH paynal-remove 1  "remove " 
+.SH NAME
+paynal\-remove \- Remove a request or routine from the workspace index
+.SH SYNOPSIS
+\fBpaynal remove\fR [\fB\-\-clean\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPATH\fR> 
+.SH DESCRIPTION
+Remove a request or routine from the workspace index
+.SH OPTIONS
+.TP
+\fB\-\-clean\fR
+Physically delete the file from disk
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIPATH\fR>
+Target request or routine path

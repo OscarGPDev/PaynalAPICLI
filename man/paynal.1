@@ -1,0 +1,52 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH paynal 1  "paynal 0.1.0" 
+.SH NAME
+paynal \- CLI\-first API client, routine runner, and AI agent integration engine
+.SH SYNOPSIS
+\fBpaynal\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+CLI\-first API client, routine runner, and AI agent integration engine
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+paynal\-init(1)
+Initialize a new Paynal workspace in the current directory
+.TP
+paynal\-add(1)
+Add a new request or routine YAML template
+.TP
+paynal\-exec(1)
+Execute a request, routine, or an entire collection folder
+.TP
+paynal\-remove(1)
+Remove a request or routine from the workspace index
+.TP
+paynal\-clean(1)
+Clean unindexed orphan files or output directory
+.TP
+paynal\-doc(1)
+Generate Markdown documentation for a request or routine
+.TP
+paynal\-export(1)
+Export requests or collections to standard formats (curl, insomnia, postman)
+.TP
+paynal\-mcp(1)
+Start Model Context Protocol (MCP) server mode for AI Agents
+.TP
+paynal\-import(1)
+Import requests from external formats (Postman v2.1, Insomnia v4)
+.TP
+paynal\-ui(1)
+Launch interactive Terminal User Interface (TUI) dashboard
+.TP
+paynal\-man(1)
+View or generate UNIX man page documentation
+.SH VERSION
+v0.1.0

@@ -212,21 +212,39 @@ assert:
 
 ## 🛠️ Commands Overview
 
-| Command | Description |
-| :--- | :--- |
-| `paynal init` | Initializes `paynal.json` manifest and directory structure. |
-| `paynal add <path>` | Creates a single request or routine template (`--routine`, `--type`, `-b`/`--body`). |
-| `paynal exec <path>` | Runs a request, routine, or folder (`--parallel`, `--export`, `--threads`). |
-| `paynal remove <path>` | Unlinks or permanently deletes files (`--clean`). |
-| `paynal clean <target>` | Sweeps output directory or orphan workspace files (`project` \| `out`). |
-| `paynal doc <path>` | Generates human-readable Markdown docs (`--IO "field:type:desc"`). |
-| `paynal export <path>` | Exports to `curl`, `postman`, or `insomnia` formats (`--type`). |
-| `paynal import <file>` | Imports requests from `postman` v2.1 or `insomnia` v4 JSON files (`--out`). |
-| `paynal ui` \| `tui` | Launches interactive Terminal User Interface (TUI) dashboard (`-E env`). |
-| `paynal mcp` | Starts Model Context Protocol stdio server for AI agents. |
+| Command | Aliases | Description |
+| :--- | :--- | :--- |
+| `paynal init` | | Initializes `paynal.json` manifest and directory structure. |
+| `paynal add <path>` | | Creates a single request or routine template (`-m`/`--method`, `-b`/`--body`, `--routine`). |
+| `paynal exec <path>` | `run` | Runs a request, routine, or folder (`--parallel`, `--export`, `-E`/`--env`). |
+| `paynal remove <path>` | `rm`, `del` | Unlinks or permanently deletes files (`--clean`). |
+| `paynal clean <target>` | | Sweeps output directory or orphan workspace files (`out` / `output` \| `project`). |
+| `paynal doc <path>` | | Generates human-readable Markdown docs (`--io` / `--IO "field:type:desc"`). |
+| `paynal export <path>` | | Exports to `curl`, `postman`, or `insomnia` formats (`--type` / `--to`). |
+| `paynal import <file>` | | Imports requests from `postman` v2.1 or `insomnia` v4 JSON files (`--out`). |
+| `paynal ui` | `tui` | Launches interactive Terminal User Interface (TUI) dashboard (`-E env`). |
+| `paynal mcp` | | Starts Model Context Protocol stdio server for AI agents. |
+| `paynal man` | | Reads interactive terminal man page or exports roff files (`--out`). |
+
+### 📖 Offline UNIX Man Pages
+
+You can view paginated manual pages directly in your terminal:
+
+```bash
+# View main manual page
+paynal man
+
+# View manual page for a specific subcommand
+paynal man exec
+paynal man add
+
+# Export .1 man pages to system man directory
+sudo paynal man --out /usr/local/share/man/man1
+```
 
 ---
 
 ## 🤝 Contributing & License
 
 Paynalapicli is open-source under the [GNU General Public License v3.0 (GPL-3.0)](LICENSE). Contributions, bug reports, and feature requests are welcome!
+
