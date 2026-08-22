@@ -1,9 +1,30 @@
 use crate::manifest::PaynalManifest;
 use anyhow::Result;
 use serde_json::json;
+use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
-use walkdir::WalkDir;
+
+fn collect_yaml_files_relative(dir: &Path, base: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                files.extend(collect_yaml_files_relative(&path, base));
+            } else if path.is_file() {
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if ext == "yaml" || ext == "yml" {
+                        if let Ok(rel) = path.strip_prefix(base) {
+                            files.push(rel.display().to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    files
+}
 
 pub async fn execute_mcp() -> Result<()> {
     let stdin = io::stdin();
@@ -97,21 +118,11 @@ pub async fn execute_mcp() -> Result<()> {
                     "list_routines" => {
                         let manifest = PaynalManifest::load_from_dir(Path::new(".")).unwrap_or_default();
                         let collections_dir = Path::new(&manifest.root_dir).join("collections");
-                        let mut routines = Vec::new();
-
-                        if collections_dir.exists() {
-                            for entry in WalkDir::new(&collections_dir).into_iter().filter_map(|e| e.ok()) {
-                                if entry.path().is_file() {
-                                    if let Some(ext) = entry.path().extension() {
-                                        if ext == "yaml" || ext == "yml" {
-                                            if let Ok(rel) = entry.path().strip_prefix(&collections_dir) {
-                                                routines.push(rel.display().to_string());
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        let routines = if collections_dir.exists() {
+                            collect_yaml_files_relative(&collections_dir, &collections_dir)
+                        } else {
+                            Vec::new()
+                        };
 
                         json!({
                             "jsonrpc": "2.0",

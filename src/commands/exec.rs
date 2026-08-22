@@ -6,7 +6,25 @@ use anyhow::{Context, Result};
 use chrono::Local;
 use std::fs;
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
+
+fn find_yaml_files_recursive(dir: &Path) -> Vec<PathBuf> {
+    let mut yaml_files = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                yaml_files.extend(find_yaml_files_recursive(&path));
+            } else if path.is_file() {
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if ext == "yaml" || ext == "yml" {
+                        yaml_files.push(path);
+                    }
+                }
+            }
+        }
+    }
+    yaml_files
+}
 
 pub async fn execute_exec(
     path_str: String,
@@ -45,16 +63,7 @@ pub async fn execute_exec(
     }
 
     let files_to_run = if target.is_dir() {
-        let mut yaml_files = Vec::new();
-        for entry in WalkDir::new(&target).into_iter().filter_map(|e| e.ok()) {
-            if entry.path().is_file() {
-                if let Some(ext) = entry.path().extension() {
-                    if ext == "yaml" || ext == "yml" {
-                        yaml_files.push(entry.path().to_path_buf());
-                    }
-                }
-            }
-        }
+        let mut yaml_files = find_yaml_files_recursive(&target);
         yaml_files.sort();
         yaml_files
     } else {
@@ -80,11 +89,14 @@ pub async fn execute_exec(
             .unwrap_or(&manifest.max_threads);
 
         let thread_mode = global_ctx.interpolate(raw_thread_mode);
+        let cpu_cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
 
         let max_concurrency = match thread_mode.trim() {
-            "CPUMAX" => num_cpus::get(),
+            "CPUMAX" => cpu_cores,
             "FULLMAX" => usize::MAX,
-            other => other.parse::<usize>().unwrap_or_else(|_| num_cpus::get()),
+            other => other.parse::<usize>().unwrap_or(cpu_cores),
         };
 
         println!(

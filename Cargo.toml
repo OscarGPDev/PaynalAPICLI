@@ -12,11 +12,9 @@ serde_yaml = "0.9"
 dotenvy = "0.15"
 tokio = { version = "1.40", features = ["full"] }
 anyhow = "1.0"
-num_cpus = "1.16"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
 
 colored = "2.1"
-walkdir = "2.5"
 chrono = "0.4"
 jsonpath_lib = "0.3"
 regex = "1.10"

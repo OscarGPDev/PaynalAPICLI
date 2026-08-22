@@ -20,7 +20,6 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::stdout;
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 
 // Theme palette extracted from Paynalapicli logo
 const AZTEC_TEAL: Color = Color::Rgb(27, 162, 168);
@@ -152,24 +151,32 @@ impl App {
         Ok(())
     }
 
-    fn reload_files(&mut self) {
-        let collections_base = PathBuf::from(&self._manifest.root_dir).join("collections");
+    fn collect_yaml_files(dir: &Path) -> Vec<PathBuf> {
         let mut files = Vec::new();
-
-        if collections_base.exists() {
-            for entry in WalkDir::new(&collections_base)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                if entry.path().is_file() {
-                    if let Some(ext) = entry.path().extension() {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if path.is_dir() {
+                    files.extend(Self::collect_yaml_files(&path));
+                } else if path.is_file() {
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                         if ext == "yaml" || ext == "yml" {
-                            files.push(entry.path().to_path_buf());
+                            files.push(path);
                         }
                     }
                 }
             }
         }
+        files
+    }
+
+    fn reload_files(&mut self) {
+        let collections_base = PathBuf::from(&self._manifest.root_dir).join("collections");
+        let mut files = if collections_base.exists() {
+            Self::collect_yaml_files(&collections_base)
+        } else {
+            Vec::new()
+        };
         files.sort();
         self.all_files = files;
 
