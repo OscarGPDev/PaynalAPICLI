@@ -56,9 +56,6 @@ jobs:
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y --noninteractive flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
 
-      - name: Resize Icon for Flatpak (256x256)
-        run: convert PaynalapicliOficialLogo.png -resize 256x256 PaynalapicliOficialLogo.png
-
       - name: Build Flatpak Bundle (.flatpak)
         run: |
           mkdir -p flatpak/build flatpak/repo

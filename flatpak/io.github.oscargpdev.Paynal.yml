@@ -15,7 +15,7 @@ modules:
       - install -Dm755 paynal /app/bin/paynal
       - install -Dm644 io.github.oscargpdev.Paynal.desktop /app/share/applications/io.github.oscargpdev.Paynal.desktop
       - install -Dm644 io.github.oscargpdev.Paynal.metainfo.xml /app/share/metainfo/io.github.oscargpdev.Paynal.metainfo.xml
-      - install -Dm644 PaynalapicliOficialLogo.png /app/share/icons/hicolor/256x256/apps/io.github.oscargpdev.Paynal.png
+      - install -Dm644 io.github.oscargpdev.Paynal.png /app/share/icons/hicolor/256x256/apps/io.github.oscargpdev.Paynal.png
     sources:
       - type: file
         path: ../target/release/paynal
@@ -24,4 +24,4 @@ modules:
       - type: file
         path: io.github.oscargpdev.Paynal.metainfo.xml
       - type: file
-        path: ../PaynalapicliOficialLogo.png
+        path: io.github.oscargpdev.Paynal.png
