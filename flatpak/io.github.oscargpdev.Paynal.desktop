@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Paynal
+GenericName=API Client & Testing Engine
+Comment=Lightning-fast, CLI-first API client, routine runner, and AI agent testing engine
+Exec=paynal ui
+Icon=io.github.oscargpdev.Paynal
+Terminal=true
+Type=Application
+Categories=Development;Debugger;ConsoleOnly;
+Keywords=api;http;client;rest;testing;tui;cli;routine;mcp;
+StartupNotify=false

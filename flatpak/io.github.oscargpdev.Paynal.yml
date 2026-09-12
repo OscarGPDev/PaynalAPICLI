@@ -1,0 +1,27 @@
+app-id: io.github.oscargpdev.Paynal
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: paynal
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --filesystem=host
+
+modules:
+  - name: paynal
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 paynal /app/bin/paynal
+      - install -Dm644 io.github.oscargpdev.Paynal.desktop /app/share/applications/io.github.oscargpdev.Paynal.desktop
+      - install -Dm644 io.github.oscargpdev.Paynal.metainfo.xml /app/share/metainfo/io.github.oscargpdev.Paynal.metainfo.xml
+      - install -Dm644 PaynalOficialLogo.png /app/share/icons/hicolor/256x256/apps/io.github.oscargpdev.Paynal.png
+    sources:
+      - type: file
+        path: ../target/release/paynal
+      - type: file
+        path: io.github.oscargpdev.Paynal.desktop
+      - type: file
+        path: io.github.oscargpdev.Paynal.metainfo.xml
+      - type: file
+        path: ../PaynalOficialLogo.png

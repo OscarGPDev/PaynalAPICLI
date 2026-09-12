@@ -39,10 +39,44 @@ Furthermore, popular API clients increasingly lock basic collaboration features 
 - 📁 **File & Multipart Uploads**: Send raw binary files with `@file` syntax or upload multi-part form data and attachments via `formData:`.
 - 🎨 **Terminal UI Dashboard**: Launch interactive TUI (`paynal ui` or `paynal tui`) with collection search (`/`), folder expand/collapse tree (`o` / `←` / `→`), template creation (`a`), external text editor launch (`e`), local file variable editor (`v`), environment profile manager (`E`), and full collection execution (`p` for parallel / `Enter` for sequential).
 - 🤖 **Native AI Agent Integration (MCP)**: Run `paynal mcp` to connect AI assistants directly via Model Context Protocol.
+- 📦 **Cross-Platform & Flatpak**: Available as pre-compiled native binaries and standalone Flatpak bundles (`paynal.flatpak`).
 
 ---
 
 ## 📦 Installation & Usage
+
+### 🚀 Quick Install
+
+#### Option A: Flatpak (Linux)
+Download the standalone `paynal.flatpak` bundle from [GitHub Releases](https://github.com/OscarGPDev/PaynalAPICLI/releases):
+```bash
+# Install the standalone bundle for the current user
+flatpak install --user paynal.flatpak
+
+# Launch interactive Terminal UI dashboard
+flatpak run io.github.oscargpdev.Paynal
+
+# Execute CLI commands directly
+flatpak run io.github.oscargpdev.Paynal exec auth/login
+
+# (Recommended) Add an alias in ~/.bashrc or ~/.zshrc:
+alias paynal="flatpak run io.github.oscargpdev.Paynal"
+```
+
+#### Option B: Pre-Compiled Binary (Linux, macOS, Windows)
+Download the archive for your architecture (`tar.gz` for Linux/macOS or `.zip` for Windows) from [GitHub Releases](https://github.com/OscarGPDev/PaynalAPICLI/releases) and move the `paynal` executable to your `PATH` (e.g. `/usr/local/bin`).
+
+#### Option C: Build from Source
+```bash
+git clone https://github.com/OscarGPDev/PaynalAPICLI.git
+cd PaynalAPICLI
+cargo build --release
+sudo cp target/release/paynal /usr/local/bin/
+```
+
+---
+
+### Quickstart Guide
 
 ### 1. Initialize Workspace
 ```bash

@@ -33,6 +33,49 @@ jobs:
       - name: Run Test Suite
         run: cargo test --verbose
 
+  flatpak:
+    name: Build & Package Flatpak
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Compile Release Binary
+        run: cargo build --release
+
+      - name: Install Flatpak & Flatpak Builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+
+      - name: Build Flatpak Bundle (.flatpak)
+        run: |
+          mkdir -p flatpak/build flatpak/repo
+          flatpak-builder --user --disable-rofiles-fuse --force-clean --repo=flatpak/repo flatpak/build flatpak/io.github.oscargpdev.Paynal.yml
+          flatpak build-bundle flatpak/repo paynal.flatpak io.github.oscargpdev.Paynal
+
+      - name: Upload Flatpak Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: paynal-flatpak
+          path: paynal.flatpak
+
+      - name: Upload Flatpak to Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: paynal.flatpak
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   release-binaries:
     name: Build Release Binary (${{ matrix.target }})
     if: startsWith(github.ref, 'refs/tags/v')

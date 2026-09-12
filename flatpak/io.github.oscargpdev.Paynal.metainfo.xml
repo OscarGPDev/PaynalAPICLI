@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="console-application">
+  <id>io.github.oscargpdev.Paynal</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Paynal</name>
+  <summary>Lightning-fast, CLI-first API client, routine runner, and AI agent testing engine</summary>
+  <description>
+    <p>
+      Paynal is a high-performance, CLI-first API client, routine runner, and AI agent testing engine written in Rust.
+    </p>
+    <p>
+      Key features include:
+    </p>
+    <ul>
+      <li>Pure-Rust TLS and lightweight runtime with zero Electron overhead</li>
+      <li>Git-native collaboration storing requests and multi-step routines in readable YAML</li>
+      <li>Dynamic variable chaining and runtime values (${$uuid}, ${$timestamp}, etc.)</li>
+      <li>Automatic retries with backoff and configurable timeouts</li>
+      <li>Built-in CI reporters (JUnit XML, JSON, Human) and exit code propagation</li>
+      <li>Interactive Terminal UI (TUI) dashboard with folder trees and variable editor</li>
+      <li>Native Model Context Protocol (MCP) server mode for AI agents</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.oscargpdev.Paynal.desktop</launchable>
+  <url type="homepage">https://github.com/OscarGPDev/PaynalAPICLI</url>
+  <url type="bugtracker">https://github.com/OscarGPDev/PaynalAPICLI/issues</url>
+  <provides>
+    <binary>paynal</binary>
+  </provides>
+  <developer_name>OscarGPDev</developer_name>
+</component>
