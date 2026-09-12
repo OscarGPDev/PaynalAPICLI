@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="PaynalapicliOficialLogo.png" alt="Paynal Logo" width="200" />
+</p>
+
 # Paynalapicli (`paynal`)
 
 > **Lightning-fast, CLI-first API client, routine runner, and AI agent testing engine built in Rust.**
