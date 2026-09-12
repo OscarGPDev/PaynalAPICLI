@@ -353,6 +353,59 @@ sudo paynal man --out /usr/local/share/man/man1
 
 ---
 
+## 🤖 AI Agent Integration
+
+Paynal provides first-class support for AI coding agents through two mechanisms:
+
+### Agent Skill (Plug & Play)
+
+Paynal ships with a ready-to-use **agent skill** in `.agents/skills/paynal-api-testing/` that teaches AI agents how to create, execute, and manage API tests autonomously.
+
+**Install in your project** — copy the skill into your project's `.agents/` directory:
+
+```bash
+cp -r /path/to/PaynalAPICLI/.agents/skills/paynal-api-testing \
+      /path/to/your-project/.agents/skills/
+```
+
+**Install globally** — make the skill available across all projects:
+
+```bash
+cp -r .agents/skills/paynal-api-testing ~/.gemini/config/skills/
+```
+
+Once installed, AI agents automatically discover the skill and gain the ability to:
+- Create request and routine YAML files with correct syntax
+- Execute API tests and interpret results
+- Chain multi-step workflows with variable captures
+- Import collections from Postman, Insomnia, or Bruno
+- Generate API documentation
+
+### MCP Server (Tool Integration)
+
+Run `paynal mcp` to start a Model Context Protocol server over stdio (JSON-RPC 2.0). Connect it to any MCP-compatible agent by adding this to your `mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "paynal": {
+      "command": "paynal",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+The MCP server exposes three tools:
+
+| Tool | Description |
+| --- | --- |
+| `list_routines` | List all YAML files in the workspace |
+| `execute_routine` | Execute a request/routine by path |
+| `create_routine` | Create a new YAML file with provided content |
+
+---
+
 ## 🤝 Contributing & License
 
 Paynalapicli is open-source under the [GNU General Public License v3.0 (GPL-3.0)](LICENSE). Contributions, bug reports, and feature requests are welcome!

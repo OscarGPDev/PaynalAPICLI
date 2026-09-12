@@ -1,0 +1,82 @@
+# Full CRUD routine — login, create, read, update, delete with variable chaining
+name: "CRUD User Flow"
+type: routine
+vars:
+  BASE_URL: "https://api.example.com"
+
+steps:
+  - id: "login"
+    request:
+      method: POST
+      url: "${BASE_URL}/auth/login"
+      headers:
+        Content-Type: "application/json"
+      body:
+        email: "${ADMIN_EMAIL}"
+        password: "${ADMIN_PASSWORD}"
+    capture:
+      token: "$.data.token"
+    assert:
+      status: 200
+
+  - id: "create-user"
+    request:
+      method: POST
+      url: "${BASE_URL}/users"
+      headers:
+        Content-Type: "application/json"
+      auth:
+        type: Bearer
+        token: "${token}"
+      body:
+        name: "Test User ${$uuid}"
+        email: "test-${$timestamp}@example.com"
+        role: "viewer"
+    capture:
+      newUserId: "$.data.id"
+    assert:
+      status: 201
+      json:
+        "$.data.role": "viewer"
+
+  - id: "get-user"
+    request:
+      method: GET
+      url: "${BASE_URL}/users/${newUserId}"
+      auth:
+        type: Bearer
+        token: "${token}"
+    assert:
+      status: 200
+      json:
+        "$.data.id": "${newUserId}"
+
+  - id: "update-user"
+    request:
+      method: PUT
+      url: "${BASE_URL}/users/${newUserId}"
+      auth:
+        type: Bearer
+        token: "${token}"
+      headers:
+        Content-Type: "application/json"
+      body:
+        role: "editor"
+    assert:
+      status: 200
+      json:
+        "$.data.role": "editor"
+    retry:
+      attempts: 2
+      backoffMs: 500
+      on: [502, 503]
+
+  - id: "delete-user"
+    request:
+      method: DELETE
+      url: "${BASE_URL}/users/${newUserId}"
+      auth:
+        type: Bearer
+        token: "${token}"
+    assert:
+      status_in: [200, 204]

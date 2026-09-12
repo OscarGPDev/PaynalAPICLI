@@ -1,0 +1,22 @@
+# Login request — captures JWT token for downstream steps
+name: "Login"
+request:
+  method: "POST"
+  url: "${BASE_URL}/api/auth/login"
+  headers:
+    Content-Type: "application/json"
+  body:
+    email: "${EMAIL}"
+    password: "${PASSWORD}"
+  timeout_ms: 10000
+
+capture:
+  token: "$.data.accessToken"
+  userId: "$.data.user.id"
+
+assert:
+  status: 200
+  json:
+    "$.success": true
+  json_type:
+    "$.data.accessToken": "string"

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "paynal": {
+      "command": "paynal",
+      "args": ["mcp"]
+    }
+  }
+}
