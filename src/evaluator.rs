@@ -6,6 +6,7 @@ use std::path::Path;
 #[derive(Debug, Clone, Default)]
 pub struct VariableContext {
     vars: HashMap<String, String>,
+    pub strict_vars: bool,
 }
 
 impl VariableContext {
@@ -39,7 +40,10 @@ impl VariableContext {
             }
         }
 
-        Self { vars }
+        Self {
+            vars,
+            strict_vars: false,
+        }
     }
 
     fn read_env_file(path: &Path, vars: &mut HashMap<String, String>) {
@@ -210,18 +214,117 @@ impl VariableContext {
     }
 
     pub fn extend(&mut self, other: &HashMap<String, String>) {
-        for (k, v) in other {
-            // Interpolate existing variables inside newly provided variables
-            let evaluated_val = self.interpolate(v);
-            self.vars.insert(k.clone(), evaluated_val);
+        // P1-7: Multi-pass fixed-point resolution so that variables inside the same block
+        // referencing each other resolve deterministically regardless of HashMap iteration order.
+        let mut unresolved: HashMap<String, String> = other.clone();
+        let max_passes = other.len().max(1);
+
+        for _ in 0..max_passes {
+            let mut resolved_any = false;
+            for (k, v) in unresolved.clone() {
+                let interpolated = self.interpolate(&v);
+                if interpolated != v || !interpolated.contains("${") {
+                    self.vars.insert(k.clone(), interpolated.clone());
+                    unresolved.insert(k, interpolated);
+                    resolved_any = true;
+                }
+            }
+            if !resolved_any {
+                break;
+            }
         }
+
+        // Final pass to commit all
+        for (k, v) in &unresolved {
+            let final_val = self.interpolate(v);
+            self.vars.insert(k.clone(), final_val);
+        }
+    }
+
+    /// Validates that there are no unresolved `${VAR}` placeholders in the input string.
+    pub fn validate_no_unresolved_placeholders(&self, input: &str) -> anyhow::Result<()> {
+        let bytes = input.as_bytes();
+        let len = bytes.len();
+        let mut i = 0;
+
+        while i < len {
+            if bytes[i] == b'\\' && i + 2 < len && bytes[i + 1] == b'$' && bytes[i + 2] == b'{' {
+                i += 3;
+                continue;
+            }
+
+            if bytes[i] == b'$' && i + 1 < len && bytes[i + 1] == b'{' {
+                let start_key = i + 2;
+                if let Some(close_rel) = input[start_key..].find('}') {
+                    let end_key = start_key + close_rel;
+                    let key = &input[start_key..end_key];
+
+                    if !self.vars.contains_key(key) && !Self::is_dynamic_variable(key) {
+                        anyhow::bail!("Unresolved variable placeholder: ${{{}}}", key);
+                    }
+                    i = end_key + 1;
+                    continue;
+                }
+            }
+
+            let ch = input[i..].chars().next().unwrap();
+            i += ch.len_utf8();
+        }
+
+        Ok(())
+    }
+
+    pub fn is_dynamic_variable(key: &str) -> bool {
+        key == "$uuid"
+            || key == "$timestamp"
+            || key == "$timestampMs"
+            || key == "$isoTimestamp"
+            || key == "$isoDate"
+            || key == "$randomInt"
+            || (key.starts_with("$randomInt(") && key.ends_with(')'))
+    }
+
+    pub fn eval_dynamic_variable(key: &str) -> Option<String> {
+        if key == "$uuid" {
+            return Some(uuid::Uuid::new_v4().to_string());
+        }
+        if key == "$timestamp" {
+            return Some(chrono::Utc::now().timestamp().to_string());
+        }
+        if key == "$timestampMs" {
+            return Some(chrono::Utc::now().timestamp_millis().to_string());
+        }
+        if key == "$isoTimestamp" || key == "$isoDate" {
+            return Some(chrono::Utc::now().to_rfc3339());
+        }
+        if key == "$randomInt" {
+            let rand_bytes = uuid::Uuid::new_v4();
+            let n = u64::from_le_bytes(rand_bytes.as_bytes()[..8].try_into().unwrap());
+            let val = (n % 1000) + 1;
+            return Some(val.to_string());
+        }
+        if key.starts_with("$randomInt(") && key.ends_with(')') {
+            let inside = &key[11..key.len() - 1];
+            if let Some((min_s, max_s)) = inside.split_once(',') {
+                if let (Ok(min), Ok(max)) = (min_s.trim().parse::<i64>(), max_s.trim().parse::<i64>()) {
+                    if min <= max {
+                        let range = (max - min + 1) as u64;
+                        let rand_bytes = uuid::Uuid::new_v4();
+                        let n = u64::from_le_bytes(rand_bytes.as_bytes()[..8].try_into().unwrap());
+                        let val = min + (n % range) as i64;
+                        return Some(val.to_string());
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Single-pass placeholder interpolation.
     /// Replaces occurrences of `${VAR_NAME}` with corresponding values from the context.
     /// - Escaped `\${VAR}` is replaced with literal `${VAR}` without interpolation.
     /// - Values with `$` (like `Ab1$xy{z}#w!%2Q` or `$100`) are inserted verbatim without re-evaluation.
-    /// - Unresolved variables remain as `${VAR_NAME}`.
+    /// - Unresolved variables remain as `${VAR_NAME}` and emit a diagnostic warning.
     pub fn interpolate(&self, input: &str) -> String {
         let mut result = String::with_capacity(input.len());
         let bytes = input.as_bytes();
@@ -246,8 +349,11 @@ impl VariableContext {
 
                     if let Some(val) = self.vars.get(key) {
                         result.push_str(val);
+                    } else if let Some(dyn_val) = Self::eval_dynamic_variable(key) {
+                        result.push_str(&dyn_val);
                     } else {
-                        // Keep unresolved placeholder intact
+                        // P1-4: Emit diagnostic warning on unresolved variable
+                        eprintln!("⚠️  Unresolved variable placeholder: ${{{}}}", key);
                         result.push_str(&input[i..=end_key]);
                     }
                     i = end_key + 1;
@@ -374,7 +480,28 @@ ESCAPED="hello \"world\"\nnew line\ttab"
             "Auth: Ab1$xy{z}#w!%2Q"
         );
     }
+
+    #[test]
+    fn test_dynamic_variables_evaluation() {
+        let ctx = VariableContext::new();
+
+        // 1. UUID
+        let uuid_val = ctx.interpolate("${$uuid}");
+        assert_eq!(uuid_val.len(), 36);
+        assert_eq!(uuid_val.chars().filter(|c| *c == '-').count(), 4);
+
+        // 2. Timestamp
+        let ts_val = ctx.interpolate("${$timestamp}");
+        assert!(ts_val.parse::<i64>().is_ok());
+
+        // 3. RandomInt range
+        for _ in 0..20 {
+            let rnd_val = ctx.interpolate("${$randomInt(50, 60)}");
+            let n: i64 = rnd_val.parse().expect("should parse integer");
+            assert!(n >= 50 && n <= 60, "Random integer {} out of range [50, 60]", n);
+        }
+
+        // 4. Validate placeholders with dynamic variables passes
+        assert!(ctx.validate_no_unresolved_placeholders("user_${$uuid}_${$timestamp}").is_ok());
+    }
 }
-
-
-

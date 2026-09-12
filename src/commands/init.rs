@@ -27,14 +27,22 @@ pub fn execute_init(name: Option<String>) -> Result<()> {
     // Save paynal.json
     manifest.save_to_dir(&current_dir)?;
 
-    // Create default directories
-    let dirs_to_create = [&manifest.out_dir, &manifest.docs_dir, "./collections"];
+    // Create default directories (collections and docs; output is created on demand)
+    let dirs_to_create = [&manifest.docs_dir, "./collections"];
     for dir_path in &dirs_to_create {
         let path = Path::new(dir_path);
         if !path.exists() {
             fs::create_dir_all(path)
                 .with_context(|| format!("Failed to create directory {}", dir_path))?;
         }
+    }
+
+    // Create default .gitignore to protect secrets and outputs (P1-2)
+    let gitignore_path = current_dir.join(".gitignore");
+    if !gitignore_path.exists() {
+        let gitignore_content = "# Paynal outputs & secrets\noutput/\npaynal.env*\n.env*\n";
+        fs::write(&gitignore_path, gitignore_content)
+            .with_context(|| format!("Failed to create {}", gitignore_path.display()))?;
     }
 
     // Create default paynal.env
@@ -51,7 +59,9 @@ pub fn execute_init(name: Option<String>) -> Result<()> {
     println!("✅ Paynal workspace initialized successfully!");
     println!("   - Manifest: {}", manifest_path.display());
     println!("   - Environment: {}", env_path.display());
-    println!("   - Output Dir: {}", manifest.out_dir);
+    println!("   - Gitignore: {}", gitignore_path.display());
+    println!("   - Collections: ./collections");
+    println!("   - Docs Dir: {}", manifest.docs_dir);
 
     Ok(())
 }

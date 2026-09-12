@@ -4,23 +4,27 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub fn execute_export(path_str: String, r#type: ExportType) -> Result<()> {
-    let mut target = PathBuf::from(&path_str);
-    if !target.exists() {
-        let collections_base = Path::new("collections");
-        let relative_yaml = if path_str.ends_with(".yaml") || path_str.ends_with(".yml") {
-            path_str.clone()
-        } else {
-            format!("{}.yaml", path_str)
-        };
-        target = collections_base.join(&relative_yaml);
+fn find_yaml_files_recursive(dir: &Path) -> Vec<PathBuf> {
+    let mut yaml_files = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                yaml_files.extend(find_yaml_files_recursive(&path));
+            } else if path.is_file() {
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if ext == "yaml" || ext == "yml" {
+                        yaml_files.push(path);
+                    }
+                }
+            }
+        }
     }
+    yaml_files
+}
 
-    if !target.exists() {
-        anyhow::bail!("Target path not found: {}", path_str);
-    }
-
-    let content = fs::read_to_string(&target)
+fn export_single_file(target: &Path, r#type: ExportType) -> Result<()> {
+    let content = fs::read_to_string(target)
         .with_context(|| format!("Failed to read {}", target.display()))?;
 
     let paynal_file: PaynalFile = serde_yaml::from_str(&content)
@@ -92,8 +96,87 @@ pub fn execute_export(path_str: String, r#type: ExportType) -> Result<()> {
     Ok(())
 }
 
+pub fn execute_export(path_str: String, r#type: ExportType) -> Result<()> {
+    let mut target = PathBuf::from(&path_str);
+    if !target.exists() {
+        let collections_base = Path::new("collections");
+        let relative_yaml = if path_str.ends_with(".yaml") || path_str.ends_with(".yml") {
+            path_str.clone()
+        } else {
+            format!("{}.yaml", path_str)
+        };
+        target = collections_base.join(&relative_yaml);
+
+        if !target.exists() {
+            let dir_candidate = collections_base.join(&path_str);
+            if dir_candidate.is_dir() {
+                target = dir_candidate;
+            }
+        }
+    }
+
+    if !target.exists() {
+        anyhow::bail!("Target path not found: {}", path_str);
+    }
+
+    if target.is_dir() {
+        let files = find_yaml_files_recursive(&target);
+        if files.is_empty() {
+            println!("⚠️  No YAML files found in directory: {}", target.display());
+            return Ok(());
+        }
+        for file in files {
+            export_single_file(&file, r#type)?;
+        }
+    } else {
+        export_single_file(&target, r#type)?;
+    }
+
+    Ok(())
+}
+
 fn build_curl_command(req: &RequestSpec) -> String {
-    let mut cmd = format!("curl -X {} \"{}\"", req.method, req.url);
+    let full_url = if let Some(params) = &req.params {
+        if !params.is_empty() {
+            let query_str = params
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect::<Vec<_>>()
+                .join("&");
+            if req.url.contains('?') {
+                format!("{}&{}", req.url, query_str)
+            } else {
+                format!("{}?{}", req.url, query_str)
+            }
+        } else {
+            req.url.clone()
+        }
+    } else {
+        req.url.clone()
+    };
+
+    let mut cmd = format!("curl -X {} \"{}\"", req.method, full_url);
+
+    if let Some(auth) = &req.auth {
+        match auth {
+            crate::models::AuthSpec::Bearer { token } => {
+                cmd.push_str(&format!(" -H \"Authorization: Bearer {}\"", token));
+            }
+            crate::models::AuthSpec::Basic { username, password } => {
+                if let Some(p) = password {
+                    cmd.push_str(&format!(" -u \"{}:{}\"", username, p));
+                } else {
+                    cmd.push_str(&format!(" -u \"{}\"", username));
+                }
+            }
+            crate::models::AuthSpec::ApiKey { key, value, r#in } => {
+                if r#in.to_lowercase() != "query" {
+                    cmd.push_str(&format!(" -H \"{}: {}\"", key, value));
+                }
+            }
+        }
+    }
+
     for (k, v) in &req.headers {
         cmd.push_str(&format!(" -H \"{}: {}\"", k, v));
     }
@@ -111,7 +194,8 @@ fn build_curl_command(req: &RequestSpec) -> String {
             if b.starts_with('@') {
                 cmd.push_str(&format!(" --data-binary \"{}\"", b));
             } else {
-                cmd.push_str(&format!(" -d '{}'", b.trim()));
+                let escaped_body = b.trim().replace('\'', "'\\''");
+                cmd.push_str(&format!(" -d '{}'", escaped_body));
             }
         }
     }
@@ -149,14 +233,41 @@ fn build_postman_item(name: &str, req: &RequestSpec) -> serde_json::Value {
         })
     };
 
+    let mut request_map = serde_json::json!({
+        "method": req.method,
+        "url": { "raw": req.url },
+        "header": req.headers.iter().map(|(k, v)| serde_json::json!({"key": k, "value": v})).collect::<Vec<_>>(),
+        "body": body_json
+    });
+
+    if let Some(auth) = &req.auth {
+        let auth_json = match auth {
+            crate::models::AuthSpec::Bearer { token } => serde_json::json!({
+                "type": "bearer",
+                "bearer": [{ "key": "token", "value": token, "type": "string" }]
+            }),
+            crate::models::AuthSpec::Basic { username, password } => serde_json::json!({
+                "type": "basic",
+                "basic": [
+                    { "key": "username", "value": username, "type": "string" },
+                    { "key": "password", "value": password.as_deref().unwrap_or(""), "type": "string" }
+                ]
+            }),
+            crate::models::AuthSpec::ApiKey { key, value, r#in } => serde_json::json!({
+                "type": "apikey",
+                "apikey": [
+                    { "key": "key", "value": key, "type": "string" },
+                    { "key": "value", "value": value, "type": "string" },
+                    { "key": "in", "value": r#in, "type": "string" }
+                ]
+            }),
+        };
+        request_map["auth"] = auth_json;
+    }
+
     serde_json::json!({
         "name": name,
-        "request": {
-            "method": req.method,
-            "url": { "raw": req.url },
-            "header": req.headers.iter().map(|(k, v)| serde_json::json!({"key": k, "value": v})).collect::<Vec<_>>(),
-            "body": body_json
-        }
+        "request": request_map
     })
 }
 
@@ -189,12 +300,42 @@ fn build_insomnia_resource(name: &str, req: &RequestSpec) -> serde_json::Value {
         })
     };
 
-    serde_json::json!({
+    let mut res_map = serde_json::json!({
         "_type": "request",
         "name": name,
         "method": req.method,
         "url": req.url,
         "headers": req.headers.iter().map(|(k, v)| serde_json::json!({"name": k, "value": v})).collect::<Vec<_>>(),
         "body": body_json
-    })
+    });
+
+    if let Some(params) = &req.params {
+        let param_items: Vec<_> = params
+            .iter()
+            .map(|(k, v)| serde_json::json!({"name": k, "value": v}))
+            .collect();
+        res_map["parameters"] = serde_json::json!(param_items);
+    }
+
+    if let Some(auth) = &req.auth {
+        let auth_json = match auth {
+            crate::models::AuthSpec::Bearer { token } => serde_json::json!({
+                "type": "bearer",
+                "token": token
+            }),
+            crate::models::AuthSpec::Basic { username, password } => serde_json::json!({
+                "type": "basic",
+                "username": username,
+                "password": password.as_deref().unwrap_or("")
+            }),
+            crate::models::AuthSpec::ApiKey { key, value, .. } => serde_json::json!({
+                "type": "apikey",
+                "key": key,
+                "value": value
+            }),
+        };
+        res_map["authentication"] = auth_json;
+    }
+
+    res_map
 }

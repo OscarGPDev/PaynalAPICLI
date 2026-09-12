@@ -1,13 +1,7 @@
-mod cli;
-mod commands;
-mod evaluator;
-mod manifest;
-mod models;
-mod runner;
-
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Commands};
+use paynal::cli::{Cli, Commands};
+use paynal::commands;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -32,8 +26,37 @@ async fn main() -> Result<()> {
             parallel,
             threads,
             env,
+            timeout,
+            strict_vars,
+            fail_fast,
+            dry_run,
+            verbose,
+            insecure,
+            proxy,
+            vars,
+            reporter,
+            out,
         } => {
-            commands::execute_exec(path, export, parallel, threads, env).await?;
+            let options = commands::exec::ExecOptions {
+                export_override: export,
+                parallel,
+                threads_override: threads,
+                env_profile: env,
+                timeout_override: timeout,
+                strict_vars,
+                fail_fast,
+                dry_run,
+                verbose,
+                insecure,
+                proxy_override: proxy,
+                cli_vars: vars,
+                reporter,
+                report_out: out,
+            };
+            let exit_code = commands::exec::execute_exec_with_options(path, options).await?;
+            if exit_code != 0 {
+                std::process::exit(exit_code);
+            }
         }
         Commands::Remove { path, clean } => {
             commands::execute_remove(path, clean)?;

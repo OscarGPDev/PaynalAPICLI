@@ -11,6 +11,10 @@ pub fn execute_add(
     body_override: Option<String>,
 ) -> Result<()> {
     let method = if get { "GET".to_string() } else { r#type.to_uppercase() };
+    const VALID_METHODS: &[&str] = &["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "CONNECT"];
+    if !VALID_METHODS.contains(&method.as_str()) {
+        anyhow::bail!("Invalid HTTP method: '{}'. Valid methods are: {}", method, VALID_METHODS.join(", "));
+    }
     
     // Load manifest to determine defaultBodyType
     let manifest = PaynalManifest::load_from_dir(Path::new(".")).unwrap_or_default();

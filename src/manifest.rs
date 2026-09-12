@@ -21,6 +21,12 @@ pub struct PaynalManifest {
     pub proxy: Option<String>,
     #[serde(default = "default_body_types")]
     pub default_body_types: HashMap<String, String>,
+    #[serde(default = "default_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+fn default_timeout_ms() -> u64 {
+    30_000
 }
 
 fn default_validate_certificates() -> bool {
@@ -58,6 +64,7 @@ impl Default for PaynalManifest {
             validate_certificates: true,
             proxy: None,
             default_body_types: default_body_types(),
+            timeout_ms: 30_000,
         }
     }
 }

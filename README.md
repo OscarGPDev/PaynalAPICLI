@@ -67,12 +67,27 @@ paynal add auth/e2e_circuit --routine
 # Execute a single request or routine
 paynal exec auth/login
 
+# Preview request headers/body without making network calls
+paynal exec auth/login --dry-run
+
+# Show verbose request/response diagnostics (secrets masked automatically)
+paynal exec auth/login --verbose
+
+# Run with CI reporters (human, json, junit)
+paynal exec auth/login --reporter junit --out ./test-results/junit.xml
+
 # Execute all routines in a collection folder concurrently
 paynal exec auth --parallel
 
-# Export execution output log
-paynal exec auth/login --export ./logs/login_res.txt
+# Override variables, timeouts, or SSL validation on the fly
+paynal exec auth/login --var BASE_URL=https://staging.api.com --timeout 5000 -k
 ```
+
+### Exit Codes
+Paynal returns standard exit codes for deterministic CI/CD pipelines:
+- `0`: All requests and assertions passed.
+- `1`: One or more assertions failed.
+- `2`: Network, transport, schema, or configuration error.
 
 ---
 
@@ -84,38 +99,86 @@ Paynal routines allow chaining outputs from one step into inputs for another:
 version: "1"
 name: "User Authentication & Profile Routine"
 description: "Authenticates a user, captures header token, and fetches profile"
+continueOnFailure: false             # Stop routine immediately on step failure
+
 vars:
   baseUrl: "https://api.example.com/v1"
+  traceId: "${$uuid}"                # Built-in dynamic UUID v4
 
 steps:
   - id: "login"
     name: "User Login"
+    vars:                            # Step-local variables
+      loginType: "standard"
     request:
       method: "POST"
       url: "${baseUrl}/auth/login"
+      params:
+        source: "cli"
       headers:
         Content-Type: "application/json"
+        X-Trace-Id: "${traceId}"
       body: |
         {
           "email": "${ENV_USER_EMAIL}",
           "password": "${ENV_USER_PASSWORD}"
         }
+      retry:                         # Automatic retries on transient errors
+        attempts: 3
+        backoffMs: 500
+        on: [502, 503, 504]
     capture:
       authToken: "header.Authorization"    # Capture from Response Header
       userId: "$.data.user.id"             # Capture from Response JSON Body
+      latency: "$duration"                 # Capture step latency in ms
     assert:
-      status: 200
+      status: 2xx                          # Status range
+      maxDuration: 1500
 
   - id: "get-profile"
     name: "Fetch Profile"
     request:
       method: "GET"
       url: "${baseUrl}/users/${userId}"
-      headers:
-        Authorization: "${authToken}"
+      auth:
+        type: bearer
+        token: "${authToken}"
     assert:
       status: 200
+      schema: "./schemas/user_profile.json" # JSON Schema validation
 ```
+
+### 🔑 Authentication Block (`auth:`)
+Easily configure authentication without manual header crafting:
+```yaml
+# Bearer Token
+auth:
+  type: bearer
+  token: "${TOKEN}"
+
+# HTTP Basic Auth
+auth:
+  type: basic
+  username: "${USERNAME}"
+  password: "${PASSWORD}"
+
+# API Key (Header or Query)
+auth:
+  type: apikey
+  key: "X-API-Key"
+  value: "${API_KEY}"
+  in: header # or "query"
+```
+
+### 🎲 Dynamic Variables
+Paynal provides built-in generators for runtime values:
+- `${$uuid}`: Generates a random UUID v4.
+- `${$timestamp}`: Unix timestamp in seconds.
+- `${$timestampMs}`: Unix timestamp in milliseconds.
+- `${$isoTimestamp}`: Current UTC timestamp in ISO-8601 (`YYYY-MM-DDTHH:MM:SSZ`).
+- `${$isoDate}`: Current UTC date (`YYYY-MM-DD`).
+- `${$randomInt}`: Random integer between 0 and 1,000,000.
+- `${$randomInt(min, max)}`: Random integer within range (e.g. `${$randomInt(100, 999)}`).
 
 ### 📁 File & Multipart Uploads
 
@@ -158,8 +221,10 @@ Paynal includes a comprehensive testing and validation engine:
 
 ```yaml
 assert:
-  # 1. HTTP Status Code
+  # 1. Status Code, Range, and Sets
   status: 200
+  statusRange: "2xx"           # Matches 200-299 or explicit "200-204"
+  statusIn: [200, 201, 204]    # Matches any in the list
 
   # 2. Maximum Response Latency (in milliseconds)
   maxDuration: 500
@@ -167,45 +232,51 @@ assert:
   # 3. Response Headers Validation
   headers:
     Content-Type: "application/json"
-    X-Custom-Header: "${EXPECTED_HEADER}"
+  headerContains:
+    Content-Type: "utf-8"
+  headerRegex:
+    Content-Type: "application/(json|problem\\+json)"
 
-  # 4. JSONPath Exact Value Validation
+  # 4. JSON Schema Validation
+  schema: "./schemas/response.json"
+
+  # 5. JSONPath Exact Value Validation
   json:
     "$.status": "success"
     "$.authenticated": true
     "$.data.user.id": "${EXPECTED_USER_ID}"
 
-  # 5. JSON Property Presence (passes even if value is null or empty string)
+  # 6. Numeric & Array Comparisons
+  jsonGt:
+    "$.data.itemsCount": 0
+  jsonGte:
+    "$.data.score": 80.5
+  jsonLt:
+    "$.data.errorCount": 1
+  jsonLength:
+    "$.data.items": 10
+  jsonType:
+    "$.data.user.id": "string"   # "string", "number", "boolean", "array", "object", "null"
+
+  # 7. JSON Property Presence & Absence
   exists:
     - "$.data.user.id"
-    - "$.meta.pagination"
-    - "token"              # Auto-prepends $. if omitted
-
-  # 6. JSON Property Absence (fails if property is returned)
+    - "token"                  # Auto-prepends $. if omitted
   notExists:
     - "$.error"
-    - "password"
     - "secretKey"
 
-  # 7. Substring Matching (Full Body or Per-Property, Case-Sensitive)
+  # 8. Substring Matching (Full Body or Per-Property)
   contains:
-    "$.user.name": "John"      # Exact case substring
-    "$.user.email": "@company.com"
-  # Or for full body: contains: ["Welcome back", "Success"]
-
-  # 8. Case-Insensitive Substring Matching (Full Body or Per-Property)
+    "$.user.name": "John"
   icontains:
-    "$.user.name": "john"      # Matches "John Doe", "JOHN CENA", "john"
-
-  # 9. Forbidden Substring Check (Full Body or Per-Property)
+    "$.user.name": "john"      # Case-insensitive
   notContains:
-    "$.user.role": "admin"     # Fails if role contains "admin" (case-sensitive)
-  # Or case-insensitive: notIcontains: { "$.user.role": "admin" }
+    "$.user.role": "admin"
 
-  # 10. Regular Expression Matching (Full Body or Per-Property)
+  # 9. Regular Expression Matching
   regex:
     "$.user.email": "^[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}$"
-  # Or for full body: regex: ["^\\{.*\\}$", "jwt-[a-zA-Z0-9]+"]
 ```
 
 ---
@@ -214,16 +285,16 @@ assert:
 
 | Command | Aliases | Description |
 | :--- | :--- | :--- |
-| `paynal init` | | Initializes `paynal.json` manifest and directory structure. |
-| `paynal add <path>` | | Creates a single request or routine template (`-m`/`--method`, `-b`/`--body`, `--routine`). |
-| `paynal exec <path>` | `run` | Runs a request, routine, or folder (`--parallel`, `--export`, `-E`/`--env`). |
-| `paynal remove <path>` | `rm`, `del` | Unlinks or permanently deletes files (`--clean`). |
-| `paynal clean <target>` | | Sweeps output directory or orphan workspace files (`out` / `output` \| `project`). |
-| `paynal doc <path>` | | Generates human-readable Markdown docs (`--io` / `--IO "field:type:desc"`). |
+| `paynal init` | | Initializes `paynal.json` manifest, `.gitignore`, and directory structure. |
+| `paynal add <path>` | | Creates a request or routine template (`-t`/`--type`, `-b`/`--body`, `--routine`). |
+| `paynal exec <path>` | `run` | Runs a request, routine, or folder (`--parallel`, `--reporter`, `--out`, `--dry-run`, `--verbose`, `--fail-fast`, `--strict-vars`, `--var`, `-k`, `--proxy`, `--timeout`). |
+| `paynal remove <path>` | `rm`, `del`, `delete` | Deletes files from disk (`--clean`). |
+| `paynal clean <target>` | | Sweeps output directory (`out`) or orphan/temporary files from collections (`project`). |
+| `paynal doc <path>` | | Generates Markdown docs with headers, params, body, auth, captures, and asserts (`--io`). |
 | `paynal export <path>` | | Exports to `curl`, `postman`, or `insomnia` formats (`--type` / `--to`). |
-| `paynal import <file>` | | Imports requests from `postman` v2.1 or `insomnia` v4 JSON files (`--out`). |
+| `paynal import <path>` | | Imports collections from Bruno (`.bru`), Postman v2.1, or Insomnia v4 (`--out`). |
 | `paynal ui` | `tui` | Launches interactive Terminal User Interface (TUI) dashboard (`-E env`). |
-| `paynal mcp` | | Starts Model Context Protocol stdio server for AI agents. |
+| `paynal mcp` | | Starts Model Context Protocol stdio JSON-RPC server for AI agents. |
 | `paynal man` | | Reads interactive terminal man page or exports roff files (`--out`). |
 
 ### 📖 Offline UNIX Man Pages

@@ -64,6 +64,46 @@ pub enum Commands {
         /// Environment profile (e.g. local, staging, prod) loads paynal.env.<profile>
         #[arg(long, short = 'E')]
         env: Option<String>,
+
+        /// Request timeout in milliseconds (overrides manifest timeoutMs)
+        #[arg(long, alias = "timeout-ms")]
+        timeout: Option<u64>,
+
+        /// Enforce strict variable interpolation; fails if any ${VAR} placeholder is unresolved
+        #[arg(long, default_value_t = false)]
+        strict_vars: bool,
+
+        /// Stop execution immediately on the first failed request or assertion
+        #[arg(long, default_value_t = false)]
+        fail_fast: bool,
+
+        /// Dry run mode: interpolate and preview requests without sending network traffic
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+
+        /// Verbose output showing sent request details and all response headers
+        #[arg(short = 'v', long, default_value_t = false)]
+        verbose: bool,
+
+        /// Accept invalid/untrusted TLS certificates (overrides manifest)
+        #[arg(short = 'k', long, default_value_t = false)]
+        insecure: bool,
+
+        /// HTTP/HTTPS proxy URL override (overrides manifest)
+        #[arg(long)]
+        proxy: Option<String>,
+
+        /// Custom variable overrides in KEY=VALUE format (can be specified multiple times)
+        #[arg(long = "var", value_name = "KEY=VAL")]
+        vars: Vec<String>,
+
+        /// CI report format: human, json, or junit
+        #[arg(long, value_enum, default_value = "human")]
+        reporter: crate::reporters::ReporterType,
+
+        /// Output file path for test reports (e.g. results.xml, results.json)
+        #[arg(short = 'o', long = "out")]
+        out: Option<String>,
     },
 
     /// Remove a request or routine from the workspace index

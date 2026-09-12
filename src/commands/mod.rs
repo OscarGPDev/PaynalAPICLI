@@ -10,9 +10,10 @@ pub mod mcp;
 pub mod remove;
 pub mod tui;
 
+pub use add::execute_add;
 pub use clean::execute_clean;
 pub use doc::execute_doc;
-pub use exec::execute_exec;
+pub use exec::{execute_exec, execute_exec_with_options, run_paynal_file, run_paynal_file_ext, ExecOptions, RunFileOptions};
 pub use export::execute_export;
 pub use import_cmd::execute_import;
 pub use man_cmd::execute_man;

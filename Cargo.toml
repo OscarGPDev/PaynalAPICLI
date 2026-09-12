@@ -11,16 +11,19 @@ serde_json = "1.0"
 serde_yaml = "0.9"
 tokio = { version = "1.40", features = ["full"] }
 anyhow = "1.0"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart", "cookies", "gzip", "brotli", "deflate"] }
 
 colored = "2.1"
 chrono = "0.4"
 jsonpath_lib = "0.3"
 regex = "1.10"
+uuid = { version = "1.10", features = ["v4", "fast-rng"] }
 clap_mangen = "0.2"
 ratatui = "0.28"
 crossterm = "0.28"
+jsonschema = { version = "0.56.0", default-features = false }
 
 
-
-
+[dev-dependencies]
+wiremock = "0.6"
+tempfile = "3.10"

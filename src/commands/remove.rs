@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub fn execute_remove(path_str: String, clean: bool) -> Result<()> {
+pub fn execute_remove(path_str: String, _clean: bool) -> Result<()> {
     let mut target = PathBuf::from(&path_str);
     if !target.exists() {
         let collections_base = Path::new("collections");
@@ -15,18 +15,12 @@ pub fn execute_remove(path_str: String, clean: bool) -> Result<()> {
     }
 
     if !target.exists() {
-        println!("⚠️  File not found at: {}", path_str);
-        return Ok(());
+        anyhow::bail!("File not found at: {}", path_str);
     }
 
-    if clean {
-        fs::remove_file(&target)
-            .with_context(|| format!("Failed to delete file {}", target.display()))?;
-        println!("🗑️  Deleted file from disk: {}", target.display());
-    } else {
-        println!("ℹ️  Removed entry '{}' from active tracking. (File preserved at {})", path_str, target.display());
-        println!("   (Tip: Pass '--clean' flag to permanently delete file from disk)");
-    }
+    fs::remove_file(&target)
+        .with_context(|| format!("Failed to delete file {}", target.display()))?;
+    println!("🗑️  Deleted file from disk: {}", target.display());
 
     Ok(())
 }
