@@ -50,7 +50,7 @@ pub async fn process_mcp_request(request: &serde_json::Value) -> Option<serde_js
                 },
                 "serverInfo": {
                     "name": "paynal-mcp-server",
-                    "version": "0.1.0"
+                    "version": env!("CARGO_PKG_VERSION")
                 }
             }
         }),

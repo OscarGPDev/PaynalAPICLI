@@ -10,7 +10,7 @@ async fn test_auth_bearer_and_user_agent() {
     Mock::given(method("GET"))
         .and(path("/bearer-test"))
         .and(header("authorization", "Bearer secret-token-456"))
-        .and(header("user-agent", "paynal/0.1.0"))
+        .and(header("user-agent", concat!("paynal/", env!("CARGO_PKG_VERSION"))))
         .respond_with(ResponseTemplate::new(200).set_body_string("Bearer OK"))
         .expect(1)
         .mount(&mock_server)
