@@ -183,11 +183,7 @@ fn build_curl_command(req: &RequestSpec) -> String {
 
     if let Some(form_fields) = &req.form_data {
         for (k, v) in form_fields {
-            if v.starts_with('@') {
-                cmd.push_str(&format!(" -F \"{}={}\"", k, v));
-            } else {
-                cmd.push_str(&format!(" -F \"{}={}\"", k, v));
-            }
+            cmd.push_str(&format!(" -F \"{}={}\"", k, v));
         }
     } else if let Some(b) = &req.body {
         if !b.is_empty() {

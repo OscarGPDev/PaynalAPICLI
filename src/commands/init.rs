@@ -56,12 +56,16 @@ pub fn execute_init(name: Option<String>) -> Result<()> {
             .with_context(|| format!("Failed to create {}", env_path.display()))?;
     }
 
+    // Install embedded AI agent skill (.agents/skills/paynal-api-testing)
+    let _ = crate::commands::update::install_skill_in_workspace(&current_dir)?;
+
     println!("✅ Paynal workspace initialized successfully!");
     println!("   - Manifest: {}", manifest_path.display());
     println!("   - Environment: {}", env_path.display());
     println!("   - Gitignore: {}", gitignore_path.display());
     println!("   - Collections: ./collections");
     println!("   - Docs Dir: {}", manifest.docs_dir);
+    println!("   - AI Skill: ./.agents/skills/paynal-api-testing");
 
     Ok(())
 }

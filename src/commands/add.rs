@@ -1,7 +1,7 @@
 use crate::manifest::PaynalManifest;
 use anyhow::{Context, Result};
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path};
 
 pub fn execute_add(
     path_str: String,
@@ -22,11 +22,40 @@ pub fn execute_add(
         .map(|s| s.to_lowercase())
         .unwrap_or_else(|| manifest.get_default_body_type(&method));
 
+    let raw_path = Path::new(&path_str);
+    if raw_path.is_absolute()
+        || raw_path
+            .components()
+            .any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
+    {
+        anyhow::bail!(
+            "Invalid path '{}': path traversal ('..') or absolute paths are not allowed.",
+            path_str
+        );
+    }
+
+    let stripped = path_str
+        .strip_prefix("collections/")
+        .or_else(|| path_str.strip_prefix("collections\\"))
+        .unwrap_or(&path_str);
+
+    let stripped_path = Path::new(stripped);
+    if stripped_path.is_absolute()
+        || stripped_path
+            .components()
+            .any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
+    {
+        anyhow::bail!(
+            "Invalid path '{}': path traversal ('..') or absolute paths are not allowed.",
+            path_str
+        );
+    }
+
     // Normalize target file path (append .yaml if not present)
-    let relative_path = if path_str.ends_with(".yaml") || path_str.ends_with(".yml") {
-        path_str.clone()
+    let relative_path = if stripped.ends_with(".yaml") || stripped.ends_with(".yml") {
+        stripped.to_string()
     } else {
-        format!("{}.yaml", path_str)
+        format!("{}.yaml", stripped)
     };
 
     let target_path = Path::new("collections").join(&relative_path);

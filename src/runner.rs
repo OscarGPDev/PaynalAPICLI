@@ -1042,23 +1042,30 @@ impl HttpRunner {
         })
     }
 
-    pub fn is_sensitive_header(name: &str) -> bool {
-        let lower = name.to_ascii_lowercase();
+    pub fn is_sensitive_header(key: &str) -> bool {
+        let lower = key.to_lowercase();
         lower == "authorization"
+            || lower == "proxy-authorization"
+            || lower == "x-api-key"
+            || lower == "api-key"
+            || lower == "apikey"
             || lower == "cookie"
             || lower == "set-cookie"
-            || lower == "x-api-key"
             || lower.contains("token")
             || lower.contains("secret")
             || lower.contains("password")
+            || lower.contains("api-key")
+            || lower.contains("apikey")
     }
 
-    pub fn mask_sensitive_value(header_name: &str, val: &str) -> String {
-        if Self::is_sensitive_header(header_name) {
-            if val.len() <= 8 {
+    pub fn mask_sensitive_value(key: &str, val: &str) -> String {
+        if Self::is_sensitive_header(key) {
+            let char_count = val.chars().count();
+            if char_count <= 8 {
                 "***".to_string()
             } else {
-                format!("{}...***", &val[..4])
+                let prefix: String = val.chars().take(4).collect();
+                format!("{}...***", prefix)
             }
         } else {
             val.to_string()
@@ -1166,7 +1173,7 @@ impl HttpRunner {
             match self.execute(request, assert_spec, ctx).await {
                 Ok(res) => {
                     if attempt < attempts && retry.should_retry_status(res.status) {
-                        println!(
+                        eprintln!(
                             "   ⚠️ Received HTTP status {}. Retrying attempt {}/{} after backoff...",
                             res.status,
                             attempt + 1,
@@ -1178,7 +1185,7 @@ impl HttpRunner {
                 }
                 Err(e) => {
                     if attempt < attempts {
-                        println!(
+                        eprintln!(
                             "   ⚠️ Request transport error: {}. Retrying attempt {}/{} after backoff...",
                             e,
                             attempt + 1,
@@ -1209,24 +1216,42 @@ impl HttpRunner {
         req_headers: Option<&HashMap<String, String>>,
         req_body: Option<&str>,
     ) {
-        let status_colored = if res.status < 300 {
-            format!("{}", res.status).green().bold()
-        } else if res.status < 400 {
-            format!("{}", res.status).yellow().bold()
+        let sections = if verbose {
+            crate::models::ResolvedOutputSections::all()
         } else {
-            format!("{}", res.status).red().bold()
+            crate::models::ResolvedOutputSections {
+                show_status: true,
+                show_payload: false,
+                show_headers: false,
+                show_asserts: true,
+                show_body: true,
+            }
         };
+        self.print_result_with_sections(name, method, url, res, sections, req_headers, req_body);
+    }
 
+    pub fn print_result_with_sections(
+        &self,
+        name: &str,
+        method: &str,
+        url: &str,
+        res: &ExecutionResult,
+        sections: crate::models::ResolvedOutputSections,
+        req_headers: Option<&HashMap<String, String>>,
+        req_body: Option<&str>,
+    ) {
         println!("\n{}", "─".repeat(60).dimmed());
         println!("🚀 Request: {} [{} {}]", name.bold(), method.cyan(), url);
 
-        if verbose {
-            println!("📤 Sent Request (Verbose):");
+        if sections.show_payload {
+            println!("📤 Sent Payload:");
             if let Some(headers) = req_headers {
-                println!("   Headers:");
-                for (k, v) in headers {
-                    let masked_val = Self::mask_sensitive_value(k, v);
-                    println!("     {}: {}", k.cyan(), masked_val);
+                if !headers.is_empty() {
+                    println!("   Headers:");
+                    for (k, v) in headers {
+                        let masked_val = Self::mask_sensitive_value(k, v);
+                        println!("     {}: {}", k.cyan(), masked_val);
+                    }
                 }
             }
             if let Some(body) = req_body {
@@ -1236,24 +1261,34 @@ impl HttpRunner {
             }
         }
 
-        println!(
-            "⏱️  Duration: {} ms | Status: {} ({}) | Headers: {}",
-            res.duration_ms,
-            status_colored,
-            res.status_text,
-            res.headers.len()
-        );
+        if sections.show_status {
+            let status_colored = if res.status < 300 {
+                format!("{}", res.status).green().bold()
+            } else if res.status < 400 {
+                format!("{}", res.status).yellow().bold()
+            } else {
+                format!("{}", res.status).red().bold()
+            };
 
-        if verbose && !res.headers.is_empty() {
-            println!("📥 Response Headers (Verbose):");
+            println!(
+                "⏱️  Duration: {} ms | Status: {} ({}) | Headers: {}",
+                res.duration_ms,
+                status_colored,
+                res.status_text,
+                res.headers.len()
+            );
+        }
+
+        if sections.show_headers && !res.headers.is_empty() {
+            println!("📥 Response Headers:");
             for (key, val) in &res.headers {
                 let val_str = val.to_str().unwrap_or("<binary>");
                 let masked = Self::mask_sensitive_value(key.as_str(), val_str);
                 println!("   {}: {}", key.as_str().cyan(), masked);
             }
         }
-        
-        if !res.assert_messages.is_empty() {
+
+        if sections.show_asserts && !res.assert_messages.is_empty() {
             print!("🧪 Assertions: ");
             if res.asserts_passed {
                 println!("{}", "PASSED".green().bold());
@@ -1265,16 +1300,19 @@ impl HttpRunner {
             }
         }
 
-        println!("\n📋 Response Body:");
-        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&res.body) {
-            if let Ok(pretty) = serde_json::to_string_pretty(&json_val) {
-                println!("{}", pretty);
+        if sections.show_body {
+            println!("\n📋 Response Body:");
+            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&res.body) {
+                if let Ok(pretty) = serde_json::to_string_pretty(&json_val) {
+                    println!("{}", pretty);
+                } else {
+                    println!("{}", res.body);
+                }
             } else {
                 println!("{}", res.body);
             }
-        } else {
-            println!("{}", res.body);
         }
+
         println!("{}\n", "─".repeat(60).dimmed());
     }
 
@@ -1302,3 +1340,35 @@ impl HttpRunner {
         println!("{}\n", "─".repeat(60).yellow());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mask_sensitive_value_multibyte_utf8() {
+        // Test UTF-8 multibyte characters within first 4 characters and across boundaries
+        let masked = HttpRunner::mask_sensitive_value("authorization", "éñçr123456");
+        assert_eq!(masked, "éñçr...***");
+
+        let masked_short = HttpRunner::mask_sensitive_value("authorization", "éñçr");
+        assert_eq!(masked_short, "***");
+
+        let masked_emoji = HttpRunner::mask_sensitive_value("api-key", "🔒🔑secret_key_123");
+        assert_eq!(masked_emoji, "🔒🔑se...***");
+    }
+
+    #[test]
+    fn test_is_sensitive_header() {
+        assert!(HttpRunner::is_sensitive_header("authorization"));
+        assert!(HttpRunner::is_sensitive_header("Proxy-Authorization"));
+        assert!(HttpRunner::is_sensitive_header("x-api-key"));
+        assert!(HttpRunner::is_sensitive_header("api-key"));
+        assert!(HttpRunner::is_sensitive_header("ApiKey"));
+        assert!(HttpRunner::is_sensitive_header("my-secret-token"));
+        assert!(HttpRunner::is_sensitive_header("Cookie"));
+        assert!(HttpRunner::is_sensitive_header("Set-Cookie"));
+        assert!(!HttpRunner::is_sensitive_header("Content-Type"));
+    }
+}
+

@@ -240,10 +240,12 @@ fn test_export_curl_with_quotes_params_and_auth() {
             auth: Some(AuthSpec::Bearer {
                 token: "token123".to_string(),
             }),
+            output_sections: None,
         }),
         steps: vec![],
         assert: None,
         continue_on_failure: None,
+        output_sections: None,
     };
 
     let yaml_path = temp_dir.path().join("test_req.yaml");

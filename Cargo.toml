@@ -22,6 +22,8 @@ clap_mangen = "0.2"
 ratatui = "0.28"
 crossterm = "0.28"
 jsonschema = { version = "0.56.0", default-features = false }
+flate2 = "1.0"
+tar = "0.4"
 
 
 [dev-dependencies]

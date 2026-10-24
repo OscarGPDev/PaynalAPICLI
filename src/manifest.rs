@@ -23,6 +23,18 @@ pub struct PaynalManifest {
     pub default_body_types: HashMap<String, String>,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
+    #[serde(default = "default_output_sections", alias = "output_sections", alias = "outputSections")]
+    pub output_sections: Vec<String>,
+}
+
+pub fn default_output_sections() -> Vec<String> {
+    vec![
+        "status".to_string(),
+        "payload".to_string(),
+        "headers".to_string(),
+        "asserts".to_string(),
+        "body".to_string(),
+    ]
 }
 
 fn default_timeout_ms() -> u64 {
@@ -65,6 +77,7 @@ impl Default for PaynalManifest {
             proxy: None,
             default_body_types: default_body_types(),
             timeout_ms: 30_000,
+            output_sections: default_output_sections(),
         }
     }
 }

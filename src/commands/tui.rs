@@ -58,6 +58,10 @@ struct App {
     last_response: Option<String>,
     is_executing: bool,
     env_profile: Option<String>,
+    update_notice: Option<String>,
+    is_selecting_workspace: bool,
+    workspace_list: Vec<crate::commands::global::GlobalWorkspaceEntry>,
+    workspace_idx: usize,
     _manifest: PaynalManifest,
     runner: HttpRunner,
 }
@@ -89,6 +93,10 @@ impl App {
             last_response: None,
             is_executing: false,
             env_profile,
+            update_notice: None,
+            is_selecting_workspace: false,
+            workspace_list: Vec::new(),
+            workspace_idx: 0,
             _manifest: manifest,
             runner,
         };
@@ -171,6 +179,7 @@ impl App {
     }
 
     fn reload_files(&mut self) {
+        self.expanded_folders.clear();
         let collections_base = PathBuf::from(&self._manifest.root_dir).join("collections");
         let mut files = if collections_base.exists() {
             Self::collect_yaml_files(&collections_base)
@@ -569,22 +578,52 @@ impl App {
                     let step_name = step.name.as_deref().unwrap_or(&step.id);
                     let url = ctx.interpolate(&step.request.url);
 
-                    let mut payload_desc = String::new();
-                    if let Some(form) = &step.request.form_data {
-                        let form_lines: Vec<String> = form.iter().map(|(k, v)| format!("    {}: {}", k, v)).collect();
-                        payload_desc = format!("\n  Multipart Form-Data:\n{}\n", form_lines.join("\n"));
-                    } else if let Some(body) = &step.request.body {
-                        if !body.trim().is_empty() {
-                            payload_desc = format!("\n  Payload Body:\n    {}\n", body.trim());
-                        }
-                    }
+                    let sections = crate::models::ResolvedOutputSections::resolve(
+                        step.request.output_sections.as_ref(),
+                        step.output_sections.as_ref(),
+                        paynal_file.output_sections.as_ref(),
+                        &self._manifest.output_sections,
+                        false,
+                    );
 
                     match self.runner.execute(&step.request, step.assert.as_ref(), &ctx).await {
                         Ok(res) => {
-                            output.push(format!(
-                                "▶ Step: {} [{} {}]\n  Status: {} | Time: {}ms{}\n  Response Body:\n{}\n",
-                                step_name, step.request.method, url, res.status, res.duration_ms, payload_desc, res.body
-                            ));
+                            let mut step_out = format!("▶ Step: {} [{} {}]", step_name, step.request.method, url);
+                            if sections.show_status {
+                                step_out.push_str(&format!("\n  Status: {} | Time: {}ms", res.status, res.duration_ms));
+                            }
+                            if sections.show_payload {
+                                if let Some(form) = &step.request.form_data {
+                                    let form_lines: Vec<String> = form.iter().map(|(k, v)| format!("    {}: {}", k, v)).collect();
+                                    step_out.push_str(&format!("\n  Multipart Form-Data:\n{}", form_lines.join("\n")));
+                                } else if let Some(body) = &step.request.body {
+                                    if !body.trim().is_empty() {
+                                        step_out.push_str(&format!("\n  Payload Body:\n    {}", body.trim()));
+                                    }
+                                }
+                            }
+                            if sections.show_headers && !res.headers.is_empty() {
+                                let header_lines: Vec<String> = res
+                                    .headers
+                                    .iter()
+                                    .map(|(k, v)| {
+                                        let val_str = v.to_str().unwrap_or("");
+                                        let masked = crate::runner::HttpRunner::mask_sensitive_value(k.as_str(), val_str);
+                                        format!("    {}: {}", k, masked)
+                                    })
+                                    .collect();
+                                step_out.push_str(&format!("\n  Response Headers:\n{}", header_lines.join("\n")));
+                            }
+                            if sections.show_asserts && !res.assert_messages.is_empty() {
+                                step_out.push_str(&format!("\n  Assertions: {}", if res.asserts_passed { "PASSED" } else { "FAILED" }));
+                                for msg in &res.assert_messages {
+                                    step_out.push_str(&format!("\n    • {}", msg));
+                                }
+                            }
+                            if sections.show_body {
+                                step_out.push_str(&format!("\n  Response Body:\n{}", res.body));
+                            }
+                            output.push(step_out);
                             self.runner.extract_captures(&res, &step.capture, &mut ctx);
                         }
                         Err(e) => {
@@ -596,25 +635,52 @@ impl App {
             } else if let Some(req) = &paynal_file.request {
                 let url = ctx.interpolate(&req.url);
 
-                let mut payload_desc = String::new();
-                if let Some(form) = &req.form_data {
-                    let form_lines: Vec<String> = form.iter().map(|(k, v)| format!("    {}: {}", k, v)).collect();
-                    payload_desc = format!("\nMultipart Form-Data:\n{}\n", form_lines.join("\n"));
-                } else if let Some(body) = &req.body {
-                    if !body.trim().is_empty() {
-                        payload_desc = format!("\nPayload Body:\n{}\n", body.trim());
-                    }
-                }
+                let sections = crate::models::ResolvedOutputSections::resolve(
+                    req.output_sections.as_ref(),
+                    None,
+                    paynal_file.output_sections.as_ref(),
+                    &self._manifest.output_sections,
+                    false,
+                );
 
                 match self.runner.execute(req, paynal_file.assert.as_ref(), &ctx).await {
                     Ok(res) => {
-                        output.push(format!(
-                            "🚀 Request: {} [{} {}]\nStatus: {} | Latency: {}ms{}\n\nResponse Headers:\n{}\n\nResponse Body:\n{}",
-                            paynal_file.name, req.method, url, res.status, res.duration_ms,
-                            payload_desc,
-                            res.headers.iter().map(|(k, v)| format!("{}: {}", k, v.to_str().unwrap_or(""))).collect::<Vec<_>>().join("\n"),
-                            res.body
-                        ));
+                        let mut req_out = format!("🚀 Request: {} [{} {}]", paynal_file.name, req.method, url);
+                        if sections.show_status {
+                            req_out.push_str(&format!("\nStatus: {} | Latency: {}ms", res.status, res.duration_ms));
+                        }
+                        if sections.show_payload {
+                            if let Some(form) = &req.form_data {
+                                let form_lines: Vec<String> = form.iter().map(|(k, v)| format!("  {}: {}", k, v)).collect();
+                                req_out.push_str(&format!("\n\nMultipart Form-Data:\n{}", form_lines.join("\n")));
+                            } else if let Some(body) = &req.body {
+                                if !body.trim().is_empty() {
+                                    req_out.push_str(&format!("\n\nPayload Body:\n  {}", body.trim()));
+                                }
+                            }
+                        }
+                        if sections.show_headers && !res.headers.is_empty() {
+                            let header_lines: Vec<String> = res
+                                .headers
+                                .iter()
+                                .map(|(k, v)| {
+                                    let val_str = v.to_str().unwrap_or("");
+                                    let masked = crate::runner::HttpRunner::mask_sensitive_value(k.as_str(), val_str);
+                                    format!("{}: {}", k, masked)
+                                })
+                                .collect();
+                            req_out.push_str(&format!("\n\nResponse Headers:\n{}", header_lines.join("\n")));
+                        }
+                        if sections.show_asserts && !res.assert_messages.is_empty() {
+                            req_out.push_str(&format!("\n\nAssertions: {}", if res.asserts_passed { "PASSED" } else { "FAILED" }));
+                            for msg in &res.assert_messages {
+                                req_out.push_str(&format!("\n  • {}", msg));
+                            }
+                        }
+                        if sections.show_body {
+                            req_out.push_str(&format!("\n\nResponse Body:\n{}", res.body));
+                        }
+                        output.push(req_out);
                     }
                     Err(e) => {
                         output.push(format!("❌ Request Failed: {}", e));
@@ -637,6 +703,7 @@ pub async fn execute_tui(env_profile: Option<String>) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(env_profile);
+    app.update_notice = crate::commands::update::check_update_notice_cached().await;
 
     let res = run_app(&mut terminal, &mut app).await;
 
@@ -728,6 +795,41 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, app
                                 app.is_confirming_delete = false;
                             }
                         }
+                    } else if app.is_selecting_workspace {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.is_selecting_workspace = false;
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                if app.workspace_idx > 0 {
+                                    app.workspace_idx -= 1;
+                                }
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                if !app.workspace_list.is_empty() && app.workspace_idx + 1 < app.workspace_list.len() {
+                                    app.workspace_idx += 1;
+                                }
+                            }
+                            KeyCode::Enter => {
+                                if let Some(ws) = app.workspace_list.get(app.workspace_idx).cloned() {
+                                    let ws_path = PathBuf::from(&ws.path);
+                                    if ws_path.exists() {
+                                        if std::env::set_current_dir(&ws_path).is_ok() {
+                                            app._manifest = PaynalManifest::load_from_dir(Path::new(".")).unwrap_or_default();
+                                            app.runner = HttpRunner::new(app._manifest.validate_certificates, app._manifest.proxy.as_deref());
+                                            app.reload_files();
+                                            app.last_response = Some(format!("🌐 Switched workspace to '{}' ({})", ws.name, ws.path));
+                                        } else {
+                                            app.last_response = Some(format!("❌ Failed to switch directory to: {}", ws.path));
+                                        }
+                                    } else {
+                                        app.last_response = Some(format!("❌ Workspace path does not exist: {}", ws.path));
+                                    }
+                                }
+                                app.is_selecting_workspace = false;
+                            }
+                            _ => {}
+                        }
                     } else if app.is_searching {
                         match key.code {
                             KeyCode::Esc | KeyCode::Enter => {
@@ -750,6 +852,11 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, app
                     } else {
                         match key.code {
                             KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                            KeyCode::Char('g') | KeyCode::Char('G') => {
+                                app.workspace_list = crate::commands::global::GlobalRegistry::load().unwrap_or_default().workspaces;
+                                app.workspace_idx = 0;
+                                app.is_selecting_workspace = true;
+                            }
                             KeyCode::Char('a') => {
                                 app.is_adding = true;
                                 app.add_input.clear();
@@ -815,12 +922,19 @@ fn ui(f: &mut Frame, app: &mut App) {
 
     // 1. Header Banner
     let env_str = app.env_profile.as_deref().unwrap_or("default");
-    let header_text = vec![Line::from(vec![
+    let mut header_spans = vec![
         Span::styled("⚡ PAYNALAPICLI ", Style::default().fg(AZTEC_TEAL).add_modifier(Modifier::BOLD)),
         Span::styled("— CLI API Dashboard ", Style::default().fg(AZTEC_GOLD)),
         Span::styled(format!("[Env: {}] ", env_str), Style::default().fg(AZTEC_RUST).add_modifier(Modifier::BOLD)),
-        Span::styled(format!("({} total / {} visible)", app.all_files.len(), app.visible_items.len()), Style::default().fg(Color::Gray)),
-    ])];
+        Span::styled(format!("({} total / {} visible) ", app.all_files.len(), app.visible_items.len()), Style::default().fg(Color::Gray)),
+    ];
+    if let Some(ver) = &app.update_notice {
+        header_spans.push(Span::styled(
+            format!("⬆ v{} available (paynal update)", ver),
+            Style::default().fg(AZTEC_GOLD).add_modifier(Modifier::BOLD),
+        ));
+    }
+    let header_text = vec![Line::from(header_spans)];
     let header = Paragraph::new(header_text)
         .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(AZTEC_TEAL)).style(Style::default().bg(AZTEC_DARK)));
     f.render_widget(header, chunks[0]);
@@ -947,6 +1061,11 @@ fn ui(f: &mut Frame, app: &mut App) {
             Span::styled(format!(" ⚠️ Confirm Delete '{}'? ", sel_name), Style::default().fg(AZTEC_RUST).add_modifier(Modifier::BOLD)),
             Span::styled(" [Y] Yes  [N/Esc] Cancel ", Style::default().fg(AZTEC_GOLD).add_modifier(Modifier::BOLD)),
         ])]
+    } else if app.is_selecting_workspace {
+        vec![Line::from(vec![
+            Span::styled(" 🌐 SWITCH GLOBAL WORKSPACE: ", Style::default().fg(AZTEC_GOLD).add_modifier(Modifier::BOLD)),
+            Span::styled(" [↑/↓] or [j/k] Navigate  [Enter] Select  [Esc] Cancel ", Style::default().fg(Color::White)),
+        ])]
     } else if app.is_searching {
         vec![Line::from(vec![
             Span::styled(" SEARCH MODE: ", Style::default().fg(AZTEC_GOLD).add_modifier(Modifier::BOLD)),
@@ -972,12 +1091,14 @@ fn ui(f: &mut Frame, app: &mut App) {
             Span::raw("Run  "),
             Span::styled(" [p] ", Style::default().fg(AZTEC_GOLD).add_modifier(Modifier::BOLD)),
             Span::raw("Parallel  "),
+            Span::styled(" [g] ", Style::default().fg(AZTEC_TEAL).add_modifier(Modifier::BOLD)),
+            Span::raw("Workspaces  "),
             Span::styled(" [q/Esc] ", Style::default().fg(AZTEC_RUST).add_modifier(Modifier::BOLD)),
             Span::raw("Quit"),
         ])]
     };
 
-    let border_color = if app.is_adding || app.is_searching || app.is_editing_vars {
+    let border_color = if app.is_adding || app.is_searching || app.is_editing_vars || app.is_selecting_workspace {
         AZTEC_GOLD
     } else if app.is_confirming_delete || app.is_managing_env {
         AZTEC_RUST
@@ -988,4 +1109,74 @@ fn ui(f: &mut Frame, app: &mut App) {
     let footer = Paragraph::new(footer_text)
         .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(border_color)));
     f.render_widget(footer, chunks[2]);
+
+    // 4. Modal Overlay: Global Workspace Switcher
+    if app.is_selecting_workspace {
+        let area = centered_rect(65, 50, f.area());
+        f.render_widget(ratatui::widgets::Clear, area);
+
+        let ws_items: Vec<ListItem> = if app.workspace_list.is_empty() {
+            vec![ListItem::new(Span::styled(
+                " No registered global workspaces found. Use 'paynal global add' to register workspaces.",
+                Style::default().fg(Color::Gray),
+            ))]
+        } else {
+            app.workspace_list
+                .iter()
+                .enumerate()
+                .map(|(i, ws)| {
+                    let is_sel = i == app.workspace_idx;
+                    let marker = if is_sel { "▶ " } else { "  " };
+                    let style = if is_sel {
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(AZTEC_GOLD)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+
+                    let line = Line::from(vec![
+                        Span::styled(marker, Style::default().fg(AZTEC_GOLD).add_modifier(Modifier::BOLD)),
+                        Span::styled(format!("@{} ", ws.name), Style::default().fg(AZTEC_TEAL).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            format!("— {} ", if ws.description.is_empty() { "(no description)" } else { &ws.description }),
+                            Style::default().fg(Color::White),
+                        ),
+                        Span::styled(format!("({})", ws.path), Style::default().fg(Color::DarkGray)),
+                    ]);
+                    ListItem::new(line).style(style)
+                })
+                .collect()
+        };
+
+        let ws_block = Block::default()
+            .title(" 🌐 Registered Global Workspaces (Enter to Switch, Esc to Cancel) ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(AZTEC_GOLD))
+            .style(Style::default().bg(AZTEC_DARK));
+
+        let ws_list = List::new(ws_items).block(ws_block);
+        f.render_widget(ws_list, area);
+    }
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, r: ratatui::layout::Rect) -> ratatui::layout::Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }

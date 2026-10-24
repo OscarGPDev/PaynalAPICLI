@@ -22,18 +22,19 @@ fn test_execute_add_invalid_method_rejected() {
 
 #[test]
 fn test_execute_remove_deletes_file_and_errors_on_missing() {
-    let temp_dir = TempDir::new().unwrap();
-    let file_path = temp_dir.path().join("test_del.yaml");
+    let collections_dir = Path::new("collections");
+    let _ = fs::create_dir_all(collections_dir);
+    let file_path = collections_dir.join("test_del_temp.yaml");
     fs::write(&file_path, "dummy content").unwrap();
     assert!(file_path.exists());
 
     // Successful removal
-    let res = execute_remove(file_path.to_str().unwrap().to_string(), false);
+    let res = execute_remove("test_del_temp".to_string(), false);
     assert!(res.is_ok());
     assert!(!file_path.exists(), "File should be deleted from disk");
 
     // Second removal of already deleted file should return error
-    let res_missing = execute_remove(file_path.to_str().unwrap().to_string(), false);
+    let res_missing = execute_remove("test_del_temp".to_string(), false);
     assert!(res_missing.is_err(), "Expected error when file does not exist");
 }
 
@@ -102,6 +103,7 @@ fn test_execute_doc_rich_markdown_generation() {
                     auth: Some(AuthSpec::Bearer {
                         token: "init-token".to_string(),
                     }),
+                    output_sections: None,
                 },
                 capture: captures,
                 assert: Some(AssertSpec {
@@ -112,10 +114,12 @@ fn test_execute_doc_rich_markdown_generation() {
                 }),
                 retry: None,
                 continue_on_failure: None,
+                output_sections: None,
             }
         ],
         assert: None,
         continue_on_failure: None,
+        output_sections: None,
     };
 
     let target_yaml = collections_dir.join("full_flow.yaml");

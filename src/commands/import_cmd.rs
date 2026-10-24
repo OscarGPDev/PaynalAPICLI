@@ -4,9 +4,21 @@ use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
 
 pub fn execute_import(file_path: String, out_dir: String) -> Result<()> {
+    let out_path = Path::new(&out_dir);
+    if out_path
+        .components()
+        .any(|c| matches!(c, Component::ParentDir))
+    {
+        anyhow::bail!(
+            "Invalid path '{}': path traversal ('..') is not allowed.",
+            out_dir
+        );
+    }
+
     let path = Path::new(&file_path);
     if !path.exists() {
         anyhow::bail!("Import file or directory not found: {}", file_path);
@@ -22,7 +34,23 @@ pub fn execute_import(file_path: String, out_dir: String) -> Result<()> {
             println!("📦 Importing Bruno collection from directory: {} (found {} .bru files)...", path.display(), bru_files.len());
             for bru_file in bru_files {
                 let rel = bru_file.strip_prefix(path).unwrap_or(&bru_file);
-                let dest = target_dir.join(rel).with_extension("yaml");
+                let mut dest_rel = PathBuf::new();
+                if let Some(parent) = rel.parent() {
+                    for comp in parent.components() {
+                        if let Component::Normal(c) = comp {
+                            let seg = sanitize_filename(&c.to_string_lossy());
+                            if !seg.is_empty() && seg != "." && seg != ".." {
+                                dest_rel.push(seg);
+                            }
+                        }
+                    }
+                }
+                let stem = rel.file_stem().and_then(|s| s.to_str()).unwrap_or("request");
+                dest_rel.push(format!("{}.yaml", sanitize_filename(stem)));
+                let dest = target_dir.join(&dest_rel);
+                if !dest.starts_with(target_dir) {
+                    continue;
+                }
                 if import_single_bru(&bru_file, &dest)? {
                     count += 1;
                 }
@@ -43,7 +71,11 @@ pub fn execute_import(file_path: String, out_dir: String) -> Result<()> {
         if ext == "bru" {
             println!("📦 Importing Bruno request: {}...", path.display());
             let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("imported_request");
-            let dest = target_dir.join(format!("{}.yaml", file_stem));
+            let safe_stem = sanitize_filename(file_stem);
+            let dest = target_dir.join(format!("{}.yaml", safe_stem));
+            if !dest.starts_with(target_dir) {
+                anyhow::bail!("Access denied: destination resolves outside output directory");
+            }
             if import_single_bru(path, &dest)? {
                 count += 1;
             }
@@ -54,6 +86,45 @@ pub fn execute_import(file_path: String, out_dir: String) -> Result<()> {
 
     println!("✅ Successfully imported {} requests into: {}", count, out_dir);
     Ok(())
+}
+
+pub fn sanitize_filename(raw: &str) -> String {
+    let mut s = raw.to_string();
+    while s.contains("..") {
+        s = s.replace("..", "_");
+    }
+    let sanitized: String = s
+        .chars()
+        .map(|c| {
+            if c == '/' || c == '\\' || c == ':' || c == '\0' || c.is_ascii_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let trimmed = sanitized.trim_matches(|c: char| c == '.' || c.is_whitespace());
+    let base = if trimmed.is_empty() {
+        "request".to_string()
+    } else {
+        trimmed.to_string()
+    };
+
+    let path = Path::new(&base);
+    let mut safe_name = String::new();
+    for comp in path.components() {
+        if let Component::Normal(os_str) = comp {
+            if !safe_name.is_empty() {
+                safe_name.push('_');
+            }
+            safe_name.push_str(&os_str.to_string_lossy());
+        }
+    }
+    if safe_name.is_empty() || safe_name == "." || safe_name == ".." {
+        "request".to_string()
+    } else {
+        safe_name
+    }
 }
 
 fn find_files_with_ext(dir: &Path, ext: &str) -> Vec<PathBuf> {
@@ -77,7 +148,8 @@ fn find_files_with_ext(dir: &Path, ext: &str) -> Vec<PathBuf> {
 
 fn translate_vars(input: &str) -> String {
     // Matches Postman {{var}} and Insomnia {{ _.var }} / {{ var }}
-    let re = Regex::new(r"\{\{\s*(?:_\.)?([a-zA-Z0-9_]+)\s*\}\}").unwrap();
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"\{\{\s*(?:_\.)?([a-zA-Z0-9_]+)\s*\}\}").unwrap());
     re.replace_all(input, |caps: &regex::Captures| format!("${{{}}}", &caps[1])).to_string()
 }
 
@@ -202,8 +274,11 @@ fn import_postman_items(items: &[Value], target_dir: &Path) -> Result<usize> {
                     }
                 }
 
-                let safe_name = name.to_lowercase().replace(' ', "_");
+                let safe_name = sanitize_filename(&name.to_lowercase().replace(' ', "_"));
                 let file_path = target_dir.join(format!("{}.yaml", safe_name));
+                if !file_path.starts_with(target_dir) {
+                    continue;
+                }
 
                 if let Some(parent) = file_path.parent() {
                     let _ = fs::create_dir_all(parent);
@@ -225,6 +300,7 @@ fn import_postman_items(items: &[Value], target_dir: &Path) -> Result<usize> {
                         retry: None,
                         follow_redirects: None,
                         auth,
+                        output_sections: None,
                     }),
                     steps: Vec::new(),
                     assert: Some(AssertSpec {
@@ -232,6 +308,7 @@ fn import_postman_items(items: &[Value], target_dir: &Path) -> Result<usize> {
                         ..Default::default()
                     }),
                     continue_on_failure: None,
+                    output_sections: None,
                 };
 
                 let yaml_str = serde_yaml::to_string(&paynal_file)?;
@@ -240,8 +317,13 @@ fn import_postman_items(items: &[Value], target_dir: &Path) -> Result<usize> {
             }
 
             if let Some(sub_items) = item["item"].as_array() {
-                let sub_dir = target_dir.join(name.to_lowercase().replace(' ', "_"));
-                count += import_postman_items(sub_items, &sub_dir)?;
+                let folder_name = sanitize_filename(&name.to_lowercase().replace(' ', "_"));
+                if folder_name != "." && folder_name != ".." {
+                    let sub_dir = target_dir.join(&folder_name);
+                    if sub_dir.starts_with(target_dir) {
+                        count += import_postman_items(sub_items, &sub_dir)?;
+                    }
+                }
             }
         }
     }
@@ -254,7 +336,8 @@ fn import_insomnia_resources(resources: &[Value], target_dir: &Path) -> Result<u
     for res in resources {
         if res["_type"].as_str() == Some("request_group") {
             if let Some(id) = res["_id"].as_str() {
-                let name = res["name"].as_str().unwrap_or("group").to_lowercase().replace(' ', "_");
+                let raw_group = res["name"].as_str().unwrap_or("group");
+                let name = sanitize_filename(&raw_group.to_lowercase().replace(' ', "_"));
                 let parent_id = res["parentId"].as_str().map(|s| s.to_string());
                 folder_map.insert(id.to_string(), (name, parent_id));
             }
@@ -350,7 +433,11 @@ fn import_insomnia_resources(resources: &[Value], target_dir: &Path) -> Result<u
             let mut folder_path = PathBuf::new();
             let mut curr_parent = res["parentId"].as_str().map(|s| s.to_string());
             let mut hierarchy = Vec::new();
+            let mut visited = std::collections::HashSet::new();
             while let Some(parent_id) = curr_parent {
+                if !visited.insert(parent_id.clone()) {
+                    break;
+                }
                 if let Some((folder_name, next_parent)) = folder_map.get(&parent_id) {
                     hierarchy.push(folder_name.clone());
                     curr_parent = next_parent.clone();
@@ -360,11 +447,17 @@ fn import_insomnia_resources(resources: &[Value], target_dir: &Path) -> Result<u
             }
             hierarchy.reverse();
             for seg in hierarchy {
-                folder_path = folder_path.join(seg);
+                let safe_seg = sanitize_filename(&seg);
+                if !safe_seg.is_empty() && safe_seg != "." && safe_seg != ".." {
+                    folder_path.push(safe_seg);
+                }
             }
 
-            let safe_name = name.to_lowercase().replace(' ', "_");
+            let safe_name = sanitize_filename(&name.to_lowercase().replace(' ', "_"));
             let file_path = target_dir.join(&folder_path).join(format!("{}.yaml", safe_name));
+            if !file_path.starts_with(target_dir) {
+                continue;
+            }
 
             if let Some(parent) = file_path.parent() {
                 let _ = fs::create_dir_all(parent);
@@ -386,6 +479,7 @@ fn import_insomnia_resources(resources: &[Value], target_dir: &Path) -> Result<u
                     retry: None,
                     follow_redirects: None,
                     auth,
+                    output_sections: None,
                 }),
                 steps: Vec::new(),
                 assert: Some(AssertSpec {
@@ -393,6 +487,7 @@ fn import_insomnia_resources(resources: &[Value], target_dir: &Path) -> Result<u
                     ..Default::default()
                 }),
                 continue_on_failure: None,
+                output_sections: None,
             };
 
             let yaml_str = serde_yaml::to_string(&paynal_file)?;
@@ -547,7 +642,7 @@ fn parse_bru(content: &str, file_path: &Path) -> Option<PaynalFile> {
 
     Some(PaynalFile {
         version: "1".to_string(),
-        name: name.to_lowercase().replace(' ', "_"),
+        name: sanitize_filename(&name.to_lowercase().replace(' ', "_")),
         description: Some(format!("Imported from Bruno: {}", name)),
         vars: HashMap::new(),
         request: Some(RequestSpec {
@@ -561,6 +656,7 @@ fn parse_bru(content: &str, file_path: &Path) -> Option<PaynalFile> {
             retry: None,
             follow_redirects: None,
             auth,
+            output_sections: None,
         }),
         steps: Vec::new(),
         assert: Some(AssertSpec {
@@ -568,6 +664,7 @@ fn parse_bru(content: &str, file_path: &Path) -> Option<PaynalFile> {
             ..Default::default()
         }),
         continue_on_failure: None,
+        output_sections: None,
     })
 }
 

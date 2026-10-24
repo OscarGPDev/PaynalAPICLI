@@ -54,6 +54,8 @@ pub struct RequestSpec {
     pub follow_redirects: Option<bool>,
     #[serde(default)]
     pub auth: Option<AuthSpec>,
+    #[serde(default, alias = "outputSections", alias = "output_sections")]
+    pub output_sections: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -212,6 +214,8 @@ pub struct RoutineStep {
     pub continue_on_failure: Option<bool>,
     #[serde(default)]
     pub retry: Option<RetrySpec>,
+    #[serde(default, alias = "outputSections", alias = "output_sections")]
+    pub output_sections: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -232,10 +236,302 @@ pub struct PaynalFile {
     // Multi-step routine payload
     #[serde(default)]
     pub steps: Vec<RoutineStep>,
+
+    #[serde(default, alias = "outputSections", alias = "output_sections")]
+    pub output_sections: Option<Vec<String>>,
 }
 
 impl PaynalFile {
     pub fn is_routine(&self) -> bool {
         !self.steps.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedOutputSections {
+    pub show_status: bool,
+    pub show_payload: bool,
+    pub show_headers: bool,
+    pub show_asserts: bool,
+    pub show_body: bool,
+}
+
+impl ResolvedOutputSections {
+    pub fn all() -> Self {
+        Self {
+            show_status: true,
+            show_payload: true,
+            show_headers: true,
+            show_asserts: true,
+            show_body: true,
+        }
+    }
+
+    pub fn from_slice(sections: &[String]) -> Self {
+        let mut res = Self {
+            show_status: false,
+            show_payload: false,
+            show_headers: false,
+            show_asserts: false,
+            show_body: false,
+        };
+
+        for s in sections {
+            match s.trim().to_ascii_lowercase().as_str() {
+                "all" | "*" | "full" => {
+                    res.show_status = true;
+                    res.show_payload = true;
+                    res.show_headers = true;
+                    res.show_asserts = true;
+                    res.show_body = true;
+                }
+                "status" | "summary" | "meta" | "duration" | "latency" => {
+                    res.show_status = true;
+                }
+                "payload" | "request" | "req" | "sent" | "request_body" | "request_headers" => {
+                    res.show_payload = true;
+                }
+                "headers" | "response_headers" | "res_headers" => {
+                    res.show_headers = true;
+                }
+                "asserts" | "assertions" | "assert" | "tests" => {
+                    res.show_asserts = true;
+                }
+                "body" | "response_body" | "res_body" | "response" => {
+                    res.show_body = true;
+                }
+                _ => {}
+            }
+        }
+
+        res
+    }
+
+    pub fn resolve(
+        req_sections: Option<&Vec<String>>,
+        step_sections: Option<&Vec<String>>,
+        file_sections: Option<&Vec<String>>,
+        global_sections: &[String],
+        verbose_flag: bool,
+    ) -> Self {
+        if verbose_flag {
+            return Self::all();
+        }
+
+        if let Some(sections) = req_sections {
+            Self::from_slice(sections)
+        } else if let Some(sections) = step_sections {
+            Self::from_slice(sections)
+        } else if let Some(sections) = file_sections {
+            Self::from_slice(sections)
+        } else {
+            Self::from_slice(global_sections)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolved_output_sections_all() {
+        let all = ResolvedOutputSections::all();
+        assert!(all.show_status);
+        assert!(all.show_payload);
+        assert!(all.show_headers);
+        assert!(all.show_asserts);
+        assert!(all.show_body);
+    }
+
+    #[test]
+    fn test_from_slice_empty() {
+        let empty = ResolvedOutputSections::from_slice(&[]);
+        assert!(!empty.show_status);
+        assert!(!empty.show_payload);
+        assert!(!empty.show_headers);
+        assert!(!empty.show_asserts);
+        assert!(!empty.show_body);
+    }
+
+    #[test]
+    fn test_from_slice_individual_and_aliases() {
+        // Status and aliases
+        for alias in &["status", "summary", "meta", "duration", "latency"] {
+            let res = ResolvedOutputSections::from_slice(&[alias.to_string()]);
+            assert!(res.show_status, "Failed for alias {}", alias);
+            assert!(!res.show_payload);
+            assert!(!res.show_headers);
+            assert!(!res.show_asserts);
+            assert!(!res.show_body);
+        }
+
+        // Payload and aliases
+        for alias in &["payload", "request", "req", "sent", "request_body", "request_headers"] {
+            let res = ResolvedOutputSections::from_slice(&[alias.to_string()]);
+            assert!(res.show_payload, "Failed for alias {}", alias);
+            assert!(!res.show_status);
+            assert!(!res.show_headers);
+            assert!(!res.show_asserts);
+            assert!(!res.show_body);
+        }
+
+        // Headers and aliases
+        for alias in &["headers", "response_headers", "res_headers"] {
+            let res = ResolvedOutputSections::from_slice(&[alias.to_string()]);
+            assert!(res.show_headers, "Failed for alias {}", alias);
+            assert!(!res.show_status);
+            assert!(!res.show_payload);
+            assert!(!res.show_asserts);
+            assert!(!res.show_body);
+        }
+
+        // Asserts and aliases
+        for alias in &["asserts", "assertions", "assert", "tests"] {
+            let res = ResolvedOutputSections::from_slice(&[alias.to_string()]);
+            assert!(res.show_asserts, "Failed for alias {}", alias);
+            assert!(!res.show_status);
+            assert!(!res.show_payload);
+            assert!(!res.show_headers);
+            assert!(!res.show_body);
+        }
+
+        // Body and aliases
+        for alias in &["body", "response_body", "res_body", "response"] {
+            let res = ResolvedOutputSections::from_slice(&[alias.to_string()]);
+            assert!(res.show_body, "Failed for alias {}", alias);
+            assert!(!res.show_status);
+            assert!(!res.show_payload);
+            assert!(!res.show_headers);
+            assert!(!res.show_asserts);
+        }
+
+        // All and aliases
+        for alias in &["all", "*", "full"] {
+            let res = ResolvedOutputSections::from_slice(&[alias.to_string()]);
+            assert_eq!(res, ResolvedOutputSections::all(), "Failed for all alias {}", alias);
+        }
+    }
+
+    #[test]
+    fn test_from_slice_combinations() {
+        let res = ResolvedOutputSections::from_slice(&["headers".to_string(), "body".to_string()]);
+        assert!(!res.show_status);
+        assert!(!res.show_payload);
+        assert!(res.show_headers);
+        assert!(!res.show_asserts);
+        assert!(res.show_body);
+
+        let res_single = ResolvedOutputSections::from_slice(&["asserts".to_string()]);
+        assert_eq!(
+            res_single,
+            ResolvedOutputSections {
+                show_status: false,
+                show_payload: false,
+                show_headers: false,
+                show_asserts: true,
+                show_body: false,
+            }
+        );
+
+        let res_payload = ResolvedOutputSections::from_slice(&["payload".to_string()]);
+        assert_eq!(
+            res_payload,
+            ResolvedOutputSections {
+                show_status: false,
+                show_payload: true,
+                show_headers: false,
+                show_asserts: false,
+                show_body: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_resolve_hierarchy() {
+        let global = vec!["status".to_string()];
+        let file_sec = vec!["headers".to_string()];
+        let step_sec = vec!["asserts".to_string()];
+        let req_sec = vec!["body".to_string()];
+
+        // 1. verbose_flag overrides all
+        let res_verbose = ResolvedOutputSections::resolve(
+            Some(&req_sec),
+            Some(&step_sec),
+            Some(&file_sec),
+            &global,
+            true,
+        );
+        assert_eq!(res_verbose, ResolvedOutputSections::all());
+
+        // 2. Request level takes precedence over Step, File, Global
+        let res_req = ResolvedOutputSections::resolve(
+            Some(&req_sec),
+            Some(&step_sec),
+            Some(&file_sec),
+            &global,
+            false,
+        );
+        assert!(res_req.show_body);
+        assert!(!res_req.show_asserts);
+        assert!(!res_req.show_headers);
+        assert!(!res_req.show_status);
+
+        // 3. Step level takes precedence over File, Global
+        let res_step = ResolvedOutputSections::resolve(
+            None,
+            Some(&step_sec),
+            Some(&file_sec),
+            &global,
+            false,
+        );
+        assert!(res_step.show_asserts);
+        assert!(!res_step.show_body);
+        assert!(!res_step.show_headers);
+        assert!(!res_step.show_status);
+
+        // 4. File level takes precedence over Global
+        let res_file = ResolvedOutputSections::resolve(
+            None,
+            None,
+            Some(&file_sec),
+            &global,
+            false,
+        );
+        assert!(res_file.show_headers);
+        assert!(!res_file.show_asserts);
+        assert!(!res_file.show_status);
+
+        // 5. Fallback to Global
+        let res_global = ResolvedOutputSections::resolve(
+            None,
+            None,
+            None,
+            &global,
+            false,
+        );
+        assert!(res_global.show_status);
+        assert!(!res_global.show_headers);
+        assert!(!res_global.show_asserts);
+        assert!(!res_global.show_body);
+    }
+
+    #[test]
+    fn test_yaml_deserialization_output_sections() {
+        let yaml_content = r#"
+version: "1"
+name: "Output Sections Test"
+outputSections:
+  - status
+  - body
+request:
+  method: "GET"
+  url: "https://example.com"
+  output_sections:
+    - asserts
+"#;
+        let file: PaynalFile = serde_yaml::from_str(yaml_content).unwrap();
+        assert_eq!(file.output_sections, Some(vec!["status".to_string(), "body".to_string()]));
+        assert_eq!(file.request.unwrap().output_sections, Some(vec!["asserts".to_string()]));
     }
 }
