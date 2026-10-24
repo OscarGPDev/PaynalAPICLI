@@ -8,7 +8,10 @@ use chrono::Local;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
+
+static EXPORT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Default)]
 pub struct ExecOptions {
@@ -36,6 +39,8 @@ pub struct RunFileOptions {
     pub dry_run: bool,
     pub verbose: bool,
     pub cli_vars: HashMap<String, String>,
+    pub silent: bool,
+    pub workspace_dir: Option<PathBuf>,
 }
 
 fn find_yaml_files_recursive(dir: &Path) -> Vec<PathBuf> {
@@ -90,24 +95,111 @@ pub async fn execute_exec_with_options(
     path_str: String,
     options: ExecOptions,
 ) -> Result<i32> {
-    let manifest = PaynalManifest::load_from_dir(Path::new("."))
+    let silent = options.reporter != ReporterType::Human;
+
+    // 1. Check if path_str is an inline URL
+    if path_str.starts_with("http://") || path_str.starts_with("https://") {
+        let req_args = crate::commands::req_cmd::ReqArgs {
+            method_or_url: path_str,
+            url: None,
+            headers: Vec::new(),
+            body: None,
+            params: Vec::new(),
+            bearer: None,
+            assert_status: None,
+            assert_json: Vec::new(),
+            sections: None,
+            env: options.env_profile,
+            vars: options.cli_vars,
+            timeout: options.timeout_override,
+            insecure: options.insecure,
+            dry_run: options.dry_run,
+            verbose: options.verbose,
+            save: None,
+        };
+        return crate::commands::req_cmd::execute_req(req_args).await;
+    }
+
+    // 2. Resolve cross-workspace paths (@workspace/subpath or @workspace, or workspace/subpath)
+    let mut resolved_path_str = path_str.clone();
+    let mut workspace_dir: Option<PathBuf> = None;
+    if path_str.starts_with('@') {
+        let stripped = &path_str[1..];
+        let (ws_name, subpath) = match stripped.split_once('/') {
+            Some((w, s)) => (w, Some(s)),
+            None => (stripped, None),
+        };
+        let registry = crate::commands::global::GlobalRegistry::load()?;
+        if let Some(entry) = registry.find_workspace(ws_name) {
+            let ws_path = PathBuf::from(&entry.path);
+            if !ws_path.exists() {
+                anyhow::bail!(
+                    "Global workspace '{}' directory does not exist: {}",
+                    entry.name,
+                    entry.path
+                );
+            }
+            workspace_dir = Some(ws_path);
+            resolved_path_str = subpath.unwrap_or("collections").to_string();
+        } else {
+            anyhow::bail!(
+                "Global workspace '@{}' not found in registry. Run 'paynal global list' to view registered workspaces.",
+                ws_name
+            );
+        }
+    } else {
+        let local_target = PathBuf::from(&path_str);
+        let collections_candidate = Path::new("collections").join(&path_str);
+        let collections_yaml_candidate = Path::new("collections").join(format!("{}.yaml", path_str));
+        let collections_yml_candidate = Path::new("collections").join(format!("{}.yml", path_str));
+
+        let exists_locally = local_target.exists()
+            || collections_candidate.exists()
+            || collections_yaml_candidate.exists()
+            || collections_yml_candidate.exists();
+
+        if !exists_locally {
+            let (ws_candidate, subpath) = match path_str.split_once('/') {
+                Some((w, s)) => (w, Some(s)),
+                None => (path_str.as_str(), None),
+            };
+            if let Ok(registry) = crate::commands::global::GlobalRegistry::load() {
+                if let Some(entry) = registry.find_workspace(ws_candidate) {
+                    let ws_path = PathBuf::from(&entry.path);
+                    if ws_path.exists() {
+                        workspace_dir = Some(ws_path);
+                        resolved_path_str = subpath.unwrap_or("collections").to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    let ws_root = workspace_dir.as_deref().unwrap_or_else(|| Path::new("."));
+    let manifest = PaynalManifest::load_from_dir(ws_root)
         .unwrap_or_default();
 
-    let root_path = PathBuf::from(&manifest.root_dir);
+    let root_path = match &workspace_dir {
+        Some(ws_dir) => ws_dir.join(&manifest.root_dir),
+        None => PathBuf::from(&manifest.root_dir),
+    };
     let collections_base = root_path.join("collections");
 
     // Resolve target path
-    let mut target = PathBuf::from(&path_str);
+    let mut target = match &workspace_dir {
+        Some(ws_dir) => ws_dir.join(&resolved_path_str),
+        None => PathBuf::from(&resolved_path_str),
+    };
     if !target.exists() {
-        let relative_yaml = if path_str.ends_with(".yaml") || path_str.ends_with(".yml") {
-            path_str.clone()
+        let relative_yaml = if resolved_path_str.ends_with(".yaml") || resolved_path_str.ends_with(".yml") {
+            resolved_path_str.clone()
         } else {
-            format!("{}.yaml", path_str)
+            format!("{}.yaml", resolved_path_str)
         };
         target = collections_base.join(&relative_yaml);
 
         if !target.exists() {
-            let dir_candidate = collections_base.join(&path_str);
+            let dir_candidate = collections_base.join(&resolved_path_str);
             if dir_candidate.is_dir() {
                 target = dir_candidate;
             }
@@ -115,14 +207,16 @@ pub async fn execute_exec_with_options(
     }
 
     if !target.exists() {
-        anyhow::bail!("Target path not found: {}", path_str);
+        anyhow::bail!("Target path not found: {}", resolved_path_str);
     }
 
     let mut files_to_run = Vec::new();
     if target.is_dir() {
         files_to_run = find_yaml_files_recursive(&target);
         if files_to_run.is_empty() {
-            println!("⚠️  No YAML routine or request files found in directory: {}", target.display());
+            if !silent {
+                println!("⚠️  No YAML routine or request files found in directory: {}", target.display());
+            }
             return Ok(0);
         }
         files_to_run.sort();
@@ -153,7 +247,7 @@ pub async fn execute_exec_with_options(
     for var_entry in &options.cli_vars {
         if let Some((k, v)) = var_entry.split_once('=') {
             cli_vars_map.insert(k.trim().to_string(), v.trim().to_string());
-        } else {
+        } else if !silent {
             eprintln!("⚠️  Invalid --var format '{}', expected KEY=VAL", var_entry);
         }
     }
@@ -165,13 +259,18 @@ pub async fn execute_exec_with_options(
         dry_run: options.dry_run,
         verbose: options.verbose,
         cli_vars: cli_vars_map,
+        silent,
+        workspace_dir: workspace_dir.clone(),
     });
 
     let start_all = Instant::now();
     let mut test_report = TestReport::default();
 
     if options.parallel && files_to_run.len() > 1 {
-        let global_ctx = VariableContext::new_with_env(options.env_profile.as_deref());
+        let global_ctx = match &workspace_dir {
+            Some(dir) => VariableContext::new_with_dir(dir, options.env_profile.as_deref()),
+            None => VariableContext::new_with_env(options.env_profile.as_deref()),
+        };
         let raw_thread_mode = options
             .threads_override
             .as_deref()
@@ -190,15 +289,17 @@ pub async fn execute_exec_with_options(
 
         let permits = max_concurrency.min(tokio::sync::Semaphore::MAX_PERMITS);
 
-        println!(
-            "⚡ Executing {} files in parallel (Max Concurrency: {})...",
-            files_to_run.len(),
-            if thread_mode.trim() == "FULLMAX" {
-                format!("FULLMAX ({})", permits)
-            } else {
-                permits.to_string()
-            }
-        );
+        if !silent {
+            println!(
+                "⚡ Executing {} files in parallel (Max Concurrency: {})...",
+                files_to_run.len(),
+                if thread_mode.trim() == "FULLMAX" {
+                    format!("FULLMAX ({})", permits)
+                } else {
+                    permits.to_string()
+                }
+            );
+        }
 
         let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(permits));
         let mut join_set = tokio::task::JoinSet::new();
@@ -224,13 +325,17 @@ pub async fn execute_exec_with_options(
                     let passed = file_report.passed;
                     test_report.files.push(file_report);
                     if !passed && options.fail_fast {
-                        println!("⏹️  Halting remaining tasks due to --fail-fast.");
+                        if !silent {
+                            println!("⏹️  Halting remaining tasks due to --fail-fast.");
+                        }
                         join_set.abort_all();
                         break;
                     }
                 }
                 Ok((file_path, Err(e))) => {
-                    eprintln!("⚠️  Execution error in {}: {}", file_path.display(), e);
+                    if !silent {
+                        eprintln!("⚠️  Execution error in {}: {}", file_path.display(), e);
+                    }
                     test_report.files.push(FileReport {
                         name: file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown").to_string(),
                         path: file_path.display().to_string(),
@@ -241,13 +346,17 @@ pub async fn execute_exec_with_options(
                         steps: Vec::new(),
                     });
                     if options.fail_fast {
-                        println!("⏹️  Halting remaining tasks due to --fail-fast.");
+                        if !silent {
+                            println!("⏹️  Halting remaining tasks due to --fail-fast.");
+                        }
                         join_set.abort_all();
                         break;
                     }
                 }
                 Err(join_err) => {
-                    eprintln!("⚠️  Task join error: {}", join_err);
+                    if !silent {
+                        eprintln!("⚠️  Task join error: {}", join_err);
+                    }
                     test_report.files.push(FileReport {
                         name: "parallel_task".to_string(),
                         path: String::new(),
@@ -258,7 +367,9 @@ pub async fn execute_exec_with_options(
                         steps: Vec::new(),
                     });
                     if options.fail_fast {
-                        println!("⏹️  Halting remaining tasks due to --fail-fast.");
+                        if !silent {
+                            println!("⏹️  Halting remaining tasks due to --fail-fast.");
+                        }
                         join_set.abort_all();
                         break;
                     }
@@ -272,12 +383,16 @@ pub async fn execute_exec_with_options(
                     let passed = file_report.passed;
                     test_report.files.push(file_report);
                     if !passed && options.fail_fast {
-                        println!("⏹️  Halting execution due to --fail-fast.");
+                        if !silent {
+                            println!("⏹️  Halting execution due to --fail-fast.");
+                        }
                         break;
                     }
                 }
                 Err(e) => {
-                    eprintln!("⚠️  Execution error in {}: {}", file_path.display(), e);
+                    if !silent {
+                        eprintln!("⚠️  Execution error in {}: {}", file_path.display(), e);
+                    }
                     test_report.files.push(FileReport {
                         name: file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown").to_string(),
                         path: file_path.display().to_string(),
@@ -288,7 +403,9 @@ pub async fn execute_exec_with_options(
                         steps: Vec::new(),
                     });
                     if options.fail_fast {
-                        println!("⏹️  Halting execution due to --fail-fast.");
+                        if !silent {
+                            println!("⏹️  Halting execution due to --fail-fast.");
+                        }
                         break;
                     }
                 }
@@ -300,51 +417,25 @@ pub async fn execute_exec_with_options(
     test_report.compute_summary();
 
     // Render report output according to selected reporter
-    match options.reporter {
-        ReporterType::Human => {
-            let summary_str = test_report.to_human_summary();
-            println!("{}", summary_str);
-            if let Some(out_path) = &options.report_out {
-                if let Some(parent) = Path::new(out_path).parent() {
-                    let _ = fs::create_dir_all(parent);
-                }
-                if let Err(e) = fs::write(out_path, &summary_str) {
-                    eprintln!("⚠️  Failed to write report to {}: {}", out_path, e);
-                } else {
-                    println!("📄 Report written to: {}", out_path);
-                }
-            }
+    let output_str = crate::reporters::write_report(
+        &test_report,
+        options.reporter,
+        options.report_out.as_deref(),
+    )?;
+
+    if options.reporter == ReporterType::Human {
+        println!("{}", output_str);
+        if let Some(out_path) = &options.report_out {
+            println!("📄 Report written to: {}", out_path);
         }
-        ReporterType::Json => {
-            let json_str = test_report.to_json()?;
-            if let Some(out_path) = &options.report_out {
-                if let Some(parent) = Path::new(out_path).parent() {
-                    let _ = fs::create_dir_all(parent);
-                }
-                if let Err(e) = fs::write(out_path, &json_str) {
-                    eprintln!("⚠️  Failed to write JSON report to {}: {}", out_path, e);
-                } else {
-                    println!("📄 JSON report written to: {}", out_path);
-                }
-            } else {
-                println!("{}", json_str);
-            }
+    } else if let Some(out_path) = &options.report_out {
+        match options.reporter {
+            ReporterType::Json => println!("📄 JSON report written to: {}", out_path),
+            ReporterType::Junit => println!("📄 JUnit XML report written to: {}", out_path),
+            _ => {}
         }
-        ReporterType::Junit => {
-            let xml_str = test_report.to_junit_xml();
-            if let Some(out_path) = &options.report_out {
-                if let Some(parent) = Path::new(out_path).parent() {
-                    let _ = fs::create_dir_all(parent);
-                }
-                if let Err(e) = fs::write(out_path, &xml_str) {
-                    eprintln!("⚠️  Failed to write JUnit XML report to {}: {}", out_path, e);
-                } else {
-                    println!("📄 JUnit XML report written to: {}", out_path);
-                }
-            } else {
-                println!("{}", xml_str);
-            }
-        }
+    } else {
+        println!("{}", output_str);
     }
 
     if test_report.errored_files > 0 {
@@ -371,6 +462,8 @@ pub async fn run_paynal_file(
         dry_run: false,
         verbose: false,
         cli_vars: HashMap::new(),
+        silent: false,
+        workspace_dir: None,
     };
     let report = run_paynal_file_ext(runner, file_path, manifest, &opts).await?;
     Ok(report.passed)
@@ -389,7 +482,10 @@ pub async fn run_paynal_file_ext(
     let paynal_file: PaynalFile = serde_yaml::from_str(&content)
         .with_context(|| format!("Failed to parse YAML file {}", file_path.display()))?;
 
-    let mut ctx = VariableContext::new_with_env(opts.env_profile.as_deref());
+    let mut ctx = match &opts.workspace_dir {
+        Some(dir) => VariableContext::new_with_dir(dir, opts.env_profile.as_deref()),
+        None => VariableContext::new_with_env(opts.env_profile.as_deref()),
+    };
     ctx.strict_vars = opts.strict_vars;
     ctx.extend(&paynal_file.vars);
     // CLI variables override file and env variables
@@ -408,7 +504,9 @@ pub async fn run_paynal_file_ext(
 
     if paynal_file.is_routine() {
         let file_continue = paynal_file.continue_on_failure.unwrap_or(false);
-        println!("🔄 Executing Routine: {}", paynal_file.name);
+        if !opts.silent {
+            println!("🔄 Executing Routine: {}", paynal_file.name);
+        }
         let mut halted = false;
 
         for step in &paynal_file.steps {
@@ -454,13 +552,15 @@ pub async fn run_paynal_file_ext(
             let interpolated_body = step.request.body.as_ref().map(|b| step_ctx.interpolate(b));
 
             if opts.dry_run {
-                HttpRunner::dry_run_preview(
-                    step_name,
-                    &step.request.method,
-                    &interpolated_url,
-                    &interpolated_headers,
-                    interpolated_body.as_deref(),
-                );
+                if !opts.silent {
+                    HttpRunner::dry_run_preview(
+                        step_name,
+                        &step.request.method,
+                        &interpolated_url,
+                        &interpolated_headers,
+                        interpolated_body.as_deref(),
+                    );
+                }
 
                 file_report.steps.push(StepReport {
                     id: step.id.clone(),
@@ -487,15 +587,25 @@ pub async fn run_paynal_file_ext(
                 file_report.passed = false;
             }
 
-            runner.print_result_full(
-                step_name,
-                &step.request.method,
-                &interpolated_url,
-                &res,
+            let sections = crate::models::ResolvedOutputSections::resolve(
+                step.request.output_sections.as_ref(),
+                step.output_sections.as_ref(),
+                paynal_file.output_sections.as_ref(),
+                &manifest.output_sections,
                 opts.verbose,
-                Some(&interpolated_headers),
-                interpolated_body.as_deref(),
             );
+
+            if !opts.silent {
+                runner.print_result_with_sections(
+                    step_name,
+                    &step.request.method,
+                    &interpolated_url,
+                    &res,
+                    sections,
+                    Some(&interpolated_headers),
+                    interpolated_body.as_deref(),
+                );
+            }
 
             // Extract captured variables into context for subsequent steps
             runner.extract_captures(&res, &step.capture, &mut ctx);
@@ -521,23 +631,61 @@ pub async fn run_paynal_file_ext(
                 error: None,
             });
 
-            export_logs.push(format!(
-                "Step: {}\nURL: {} {}\nStatus: {}\nDuration: {}ms\nBody:\n{}\n",
-                step_name, step.request.method, interpolated_url, res.status, res.duration_ms, res.body
-            ));
+            let mut entry = format!(
+                "Step: {}\nURL: {} {}\n",
+                step_name, step.request.method, interpolated_url
+            );
+            if sections.show_status {
+                entry.push_str(&format!("Status: {}\nDuration: {}ms\n", res.status, res.duration_ms));
+            }
+            if sections.show_payload {
+                entry.push_str("Sent Payload:\n");
+                if !interpolated_headers.is_empty() {
+                    entry.push_str("  Headers:\n");
+                    for (k, v) in &interpolated_headers {
+                        entry.push_str(&format!("    {}: {}\n", k, HttpRunner::mask_sensitive_value(k, v)));
+                    }
+                }
+                if let Some(body) = &interpolated_body {
+                    if !body.is_empty() {
+                        entry.push_str(&format!("  Body:\n{}\n", body));
+                    }
+                }
+            }
+            if sections.show_headers && !res.headers.is_empty() {
+                entry.push_str("Response Headers:\n");
+                for (k, v) in &res.headers {
+                    let val_str = v.to_str().unwrap_or("<binary>");
+                    entry.push_str(&format!("  {}: {}\n", k.as_str(), HttpRunner::mask_sensitive_value(k.as_str(), val_str)));
+                }
+            }
+            if sections.show_asserts && !res.assert_messages.is_empty() {
+                entry.push_str(&format!("Assertions: {}\n", if res.asserts_passed { "PASSED" } else { "FAILED" }));
+                for msg in &res.assert_messages {
+                    entry.push_str(&format!("  • {}\n", msg));
+                }
+            }
+            if sections.show_body {
+                entry.push_str(&format!("Body:\n{}\n", res.body));
+            }
+            export_logs.push(entry);
 
             // Halt routine on step assertion failure unless continue_on_failure is enabled
             let step_continue = step.continue_on_failure.unwrap_or(file_continue);
             if !res.asserts_passed && !step_continue {
-                println!(
-                    "⏹️  Step '{}' failed assertions. Halting routine early (continueOnFailure=false).",
-                    step_name
-                );
+                if !opts.silent {
+                    println!(
+                        "⏹️  Step '{}' failed assertions. Halting routine early (continueOnFailure=false).",
+                        step_name
+                    );
+                }
                 halted = true;
             }
         }
     } else if let Some(req) = &paynal_file.request {
-        println!("🚀 Executing Single Request: {}", paynal_file.name);
+        if !opts.silent {
+            println!("🚀 Executing Single Request: {}", paynal_file.name);
+        }
         if opts.strict_vars {
             ctx.validate_no_unresolved_placeholders(&req.url)?;
             for v in req.headers.values() {
@@ -556,13 +704,15 @@ pub async fn run_paynal_file_ext(
         let interpolated_body = req.body.as_ref().map(|b| ctx.interpolate(b));
 
         if opts.dry_run {
-            HttpRunner::dry_run_preview(
-                &paynal_file.name,
-                &req.method,
-                &interpolated_url,
-                &interpolated_headers,
-                interpolated_body.as_deref(),
-            );
+            if !opts.silent {
+                HttpRunner::dry_run_preview(
+                    &paynal_file.name,
+                    &req.method,
+                    &interpolated_url,
+                    &interpolated_headers,
+                    interpolated_body.as_deref(),
+                );
+            }
 
             file_report.steps.push(StepReport {
                 id: "request-1".to_string(),
@@ -586,15 +736,25 @@ pub async fn run_paynal_file_ext(
                 file_report.passed = false;
             }
 
-            runner.print_result_full(
-                &paynal_file.name,
-                &req.method,
-                &interpolated_url,
-                &res,
+            let sections = crate::models::ResolvedOutputSections::resolve(
+                req.output_sections.as_ref(),
+                None,
+                paynal_file.output_sections.as_ref(),
+                &manifest.output_sections,
                 opts.verbose,
-                Some(&interpolated_headers),
-                interpolated_body.as_deref(),
             );
+
+            if !opts.silent {
+                runner.print_result_with_sections(
+                    &paynal_file.name,
+                    &req.method,
+                    &interpolated_url,
+                    &res,
+                    sections,
+                    Some(&interpolated_headers),
+                    interpolated_body.as_deref(),
+                );
+            }
 
             let step_failures: Vec<String> = res
                 .assert_messages
@@ -617,29 +777,76 @@ pub async fn run_paynal_file_ext(
                 error: None,
             });
 
-            export_logs.push(format!(
-                "Request: {}\nURL: {} {}\nStatus: {}\nDuration: {}ms\nBody:\n{}\n",
-                paynal_file.name, req.method, interpolated_url, res.status, res.duration_ms, res.body
-            ));
+            let mut entry = format!(
+                "Request: {}\nURL: {} {}\n",
+                paynal_file.name, req.method, interpolated_url
+            );
+            if sections.show_status {
+                entry.push_str(&format!("Status: {}\nDuration: {}ms\n", res.status, res.duration_ms));
+            }
+            if sections.show_payload {
+                entry.push_str("Sent Payload:\n");
+                if !interpolated_headers.is_empty() {
+                    entry.push_str("  Headers:\n");
+                    for (k, v) in &interpolated_headers {
+                        entry.push_str(&format!("    {}: {}\n", k, HttpRunner::mask_sensitive_value(k, v)));
+                    }
+                }
+                if let Some(body) = &interpolated_body {
+                    if !body.is_empty() {
+                        entry.push_str(&format!("  Body:\n{}\n", body));
+                    }
+                }
+            }
+            if sections.show_headers && !res.headers.is_empty() {
+                entry.push_str("Response Headers:\n");
+                for (k, v) in &res.headers {
+                    let val_str = v.to_str().unwrap_or("<binary>");
+                    entry.push_str(&format!("  {}: {}\n", k.as_str(), HttpRunner::mask_sensitive_value(k.as_str(), val_str)));
+                }
+            }
+            if sections.show_asserts && !res.assert_messages.is_empty() {
+                entry.push_str(&format!("Assertions: {}\n", if res.asserts_passed { "PASSED" } else { "FAILED" }));
+                for msg in &res.assert_messages {
+                    entry.push_str(&format!("  • {}\n", msg));
+                }
+            }
+            if sections.show_body {
+                entry.push_str(&format!("Body:\n{}\n", res.body));
+            }
+            export_logs.push(entry);
         }
-    } else {
+    } else if !opts.silent {
         println!("⚠️  File {} contains neither a single request nor routine steps.", file_path.display());
     }
 
     file_report.duration_ms = start_file_time.elapsed().as_millis();
 
+    let effective_out_dir = match &opts.workspace_dir {
+        Some(ws_dir) => {
+            let p = Path::new(&manifest.out_dir);
+            if p.is_relative() {
+                ws_dir.join(p)
+            } else {
+                p.to_path_buf()
+            }
+        }
+        None => PathBuf::from(&manifest.out_dir),
+    };
+
     // Save export if requested or if output directory exists (skipped in dry-run unless explicitly passed)
     let export_target = opts.export_override.as_deref();
-    if (!opts.dry_run && Path::new(&manifest.out_dir).exists()) || export_target.is_some() {
+    if (!opts.dry_run && effective_out_dir.exists()) || export_target.is_some() {
         let export_path = match export_target {
             Some(path) => PathBuf::from(path),
             None => {
-                let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+                let seq = EXPORT_COUNTER.fetch_add(1, Ordering::Relaxed);
+                let timestamp = Local::now().format("%Y%m%d_%H%M%S_%3f");
                 let stem = file_path
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("output");
-                PathBuf::from(&manifest.out_dir).join(format!("{}.{}.txt", stem, timestamp))
+                effective_out_dir.join(format!("export_{}_{}_{}.txt", stem, timestamp, seq))
             }
         };
 
@@ -649,8 +856,10 @@ pub async fn run_paynal_file_ext(
 
         let full_log = export_logs.join("\n========================================\n");
         if let Err(e) = fs::write(&export_path, full_log) {
-            eprintln!("⚠️  Failed to save export to {}: {}", export_path.display(), e);
-        } else {
+            if !opts.silent {
+                eprintln!("⚠️  Failed to save export to {}: {}", export_path.display(), e);
+            }
+        } else if !opts.silent {
             println!("💾 Export saved to: {}", export_path.display());
         }
     }

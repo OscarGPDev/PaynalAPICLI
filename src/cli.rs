@@ -8,6 +8,10 @@ use clap::{Parser, Subcommand, ValueEnum};
     about = "CLI-first API client, routine runner, and AI agent integration engine"
 )]
 pub struct Cli {
+    /// Switch working directory to registered global workspace before executing
+    #[arg(short = 'C', long = "workspace", alias = "project", global = true)]
+    pub workspace: Option<String>,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -172,6 +176,145 @@ pub enum Commands {
         /// Optional output directory to save roff .1 man page file(s)
         #[arg(short, long)]
         out: Option<String>,
+    },
+
+    /// Check for updates and upgrade Paynal to the latest release
+    #[command(alias = "self-update", alias = "upgrade")]
+    Update {
+        /// Only check if a new version is available without installing
+        #[arg(short, long, default_value_t = false)]
+        check: bool,
+
+        /// Automatically confirm and install the update without prompting
+        #[arg(short = 'y', long = "yes", default_value_t = false)]
+        yes: bool,
+
+        /// Refresh the embedded AI agent skill (.agents/skills/paynal-api-testing) in local and registered workspaces
+        #[arg(long = "sync-skill", alias = "sync-skills", default_value_t = false)]
+        sync_skill: bool,
+    },
+
+    /// Manage and discover global workspaces across projects
+    #[command(alias = "dir", alias = "registry", alias = "workspace")]
+    Global {
+        #[command(subcommand)]
+        action: GlobalAction,
+    },
+
+    /// Execute an ad-hoc inline HTTP request with variable interpolation and assertions
+    #[command(alias = "call", alias = "http", alias = "inline")]
+    Req {
+        /// HTTP method or URL (e.g. "GET https://api.com" or just "https://api.com")
+        method_or_url: String,
+
+        /// URL (optional if method_or_url is the URL)
+        url: Option<String>,
+
+        /// Request headers in "Key: Value" or "Key=Value" format
+        #[arg(short = 'H', long = "header")]
+        headers: Vec<String>,
+
+        /// Raw request body string
+        #[arg(short = 'b', long = "body", short_alias = 'd', alias = "data")]
+        body: Option<String>,
+
+        /// Query parameters in "key=value" format
+        #[arg(short = 'p', long = "param", alias = "query")]
+        params: Vec<String>,
+
+        /// Bearer authentication token
+        #[arg(long = "bearer")]
+        bearer: Option<String>,
+
+        /// Assert expected HTTP status code
+        #[arg(long = "status", alias = "assert-status")]
+        assert_status: Option<u16>,
+
+        /// Assert JSONPath value in "$.path=value" format
+        #[arg(long = "assert-json")]
+        assert_json: Vec<String>,
+
+        /// Selective output sections (e.g. status,payload,headers,asserts,body)
+        #[arg(long = "sections", value_delimiter = ',')]
+        sections: Option<Vec<String>>,
+
+        /// Environment profile (loads paynal.env.<profile>)
+        #[arg(long, short = 'E')]
+        env: Option<String>,
+
+        /// Custom variable overrides in KEY=VALUE format
+        #[arg(long = "var", value_name = "KEY=VAL")]
+        vars: Vec<String>,
+
+        /// Request timeout in milliseconds
+        #[arg(long)]
+        timeout: Option<u64>,
+
+        /// Accept invalid/untrusted TLS certificates
+        #[arg(short = 'k', long, default_value_t = false)]
+        insecure: bool,
+
+        /// Dry run mode: interpolate and preview request without sending network traffic
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+
+        /// Verbose output showing sent request details and all response headers
+        #[arg(short = 'v', long, default_value_t = false)]
+        verbose: bool,
+
+        /// Save inline request as a YAML file in collections/<path>.yaml
+        #[arg(long = "save")]
+        save: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum GlobalAction {
+    /// Register a workspace in the global directory
+    Add {
+        /// Name of workspace (defaults to project name from paynal.json or folder name)
+        name: Option<String>,
+
+        /// Path to workspace directory (defaults to current directory)
+        #[arg(short, long)]
+        path: Option<String>,
+
+        /// Workspace description
+        #[arg(short = 'd', long = "description", default_value = "")]
+        description: String,
+    },
+
+    /// List all registered global workspaces
+    #[command(alias = "ls")]
+    List {
+        /// Output workspaces as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+
+    /// Discover routes and routines across all registered global workspaces
+    #[command(alias = "search", alias = "routes", alias = "find")]
+    Discover {
+        /// Search filter query
+        query: Option<String>,
+
+        /// Output discovered routes as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+
+    /// Inspect a route or routine from a global workspace (@workspace/path)
+    #[command(alias = "inspect", alias = "cat")]
+    Show {
+        /// Route handle in @workspace/path or workspace/path format
+        target: String,
+    },
+
+    /// Unregister a workspace from the global directory
+    #[command(alias = "rm", alias = "del", alias = "delete")]
+    Remove {
+        /// Name of workspace to unregister
+        name: String,
     },
 }
 

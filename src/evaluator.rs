@@ -16,6 +16,10 @@ impl VariableContext {
     }
 
     pub fn new_with_env(env_profile: Option<&str>) -> Self {
+        Self::new_with_dir(Path::new("."), env_profile)
+    }
+
+    pub fn new_with_dir(dir: &Path, env_profile: Option<&str>) -> Self {
         let mut vars = HashMap::new();
 
         // 1. Load system environment
@@ -24,19 +28,19 @@ impl VariableContext {
         }
 
         // 2. Load base .env then paynal.env files (paynal.env overrides .env)
-        Self::read_env_file(Path::new(".env"), &mut vars);
-        Self::read_env_file(Path::new("paynal.env"), &mut vars);
+        Self::read_env_file(&dir.join(".env"), &mut vars);
+        Self::read_env_file(&dir.join("paynal.env"), &mut vars);
 
         // 3. Load profile-specific env file (e.g. paynal.env.staging) with override priority
         if let Some(profile) = env_profile {
             let profile_filename = format!("paynal.env.{}", profile);
             let fallback_filename = format!(".env.{}", profile);
 
-            let profile_path = Path::new(&profile_filename);
+            let profile_path = dir.join(&profile_filename);
             if profile_path.exists() {
-                Self::read_env_file(profile_path, &mut vars);
+                Self::read_env_file(&profile_path, &mut vars);
             } else {
-                Self::read_env_file(Path::new(&fallback_filename), &mut vars);
+                Self::read_env_file(&dir.join(&fallback_filename), &mut vars);
             }
         }
 
@@ -218,14 +222,20 @@ impl VariableContext {
         // referencing each other resolve deterministically regardless of HashMap iteration order.
         let mut unresolved: HashMap<String, String> = other.clone();
         let max_passes = other.len().max(1);
+        let keys: Vec<String> = other.keys().cloned().collect();
 
         for _ in 0..max_passes {
             let mut resolved_any = false;
-            for (k, v) in unresolved.clone() {
-                let interpolated = self.interpolate(&v);
-                if interpolated != v || !interpolated.contains("${") {
+            for k in &keys {
+                let (interpolated, changed) = {
+                    let v = &unresolved[k];
+                    let interp = self.interpolate(v);
+                    let changed = interp != *v || !interp.contains("${");
+                    (interp, changed)
+                };
+                if changed {
                     self.vars.insert(k.clone(), interpolated.clone());
-                    unresolved.insert(k, interpolated);
+                    unresolved.insert(k.clone(), interpolated);
                     resolved_any = true;
                 }
             }

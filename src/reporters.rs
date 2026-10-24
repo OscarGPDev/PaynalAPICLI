@@ -1,6 +1,10 @@
+use anyhow::Result;
 use clap::ValueEnum;
 use colored::*;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
+use std::sync::OnceLock;
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -200,17 +204,63 @@ impl TestReport {
     }
 }
 
-fn xml_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
+pub fn strip_ansi(input: &str) -> String {
+    static ANSI_RE: OnceLock<Regex> = OnceLock::new();
+    let re = ANSI_RE.get_or_init(|| Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").unwrap());
+    re.replace_all(input, "").to_string()
+}
+
+pub fn xml_escape(input: &str) -> String {
+    let cleaned = strip_ansi(input);
+    let mut out = String::with_capacity(cleaned.len());
+    for c in cleaned.chars() {
+        if ((c as u32) < 0x20 && c != '\t' && c != '\n' && c != '\r') || c == '\x7f' {
+            continue;
+        }
         match c {
             '&' => out.push_str("&amp;"),
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&apos;"),
-            other => out.push(other),
+            _ => out.push(c),
         }
     }
     out
 }
+
+pub fn write_report<P: AsRef<Path>>(
+    report: &TestReport,
+    reporter: ReporterType,
+    out_path: Option<P>,
+) -> Result<String> {
+    let output = match reporter {
+        ReporterType::Human => report.to_human_summary(),
+        ReporterType::Json => report.to_json()?,
+        ReporterType::Junit => report.to_junit_xml(),
+    };
+
+    if let Some(path) = out_path {
+        let p = path.as_ref();
+        if let Some(parent) = p.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(p, &output)?;
+    }
+
+    Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_xml_escape_control_chars() {
+        let raw = "Hello \x1b[31mWorld\x00! & < > \" ' \t\r\n";
+        let escaped = xml_escape(raw);
+        assert_eq!(escaped, "Hello World! &amp; &lt; &gt; &quot; &apos; \t\r\n");
+    }
+}
+
+

@@ -1,18 +1,13 @@
-# Login request — captures JWT token for downstream steps
+# Single API request — authenticates and verifies response structure
+version: "1.0"
 name: "Login"
 request:
   method: "POST"
   url: "${BASE_URL}/api/auth/login"
   headers:
     Content-Type: "application/json"
-  body:
-    email: "${EMAIL}"
-    password: "${PASSWORD}"
+  body: '{"email": "${EMAIL}", "password": "${PASSWORD}"}'
   timeout_ms: 10000
-
-capture:
-  token: "$.data.accessToken"
-  userId: "$.data.user.id"
 
 assert:
   status: 200

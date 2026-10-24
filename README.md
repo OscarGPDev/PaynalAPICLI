@@ -251,6 +251,54 @@ assert:
   status: 200
 ```
 
+### 🎛️ Output Sections Filtering (`outputSections` / `output_sections`)
+
+Paynal allows you to configure which output sections are displayed during execution in the terminal and TUI panel.
+
+#### Available Sections
+- **`status`** (aliases: `summary`, `meta`, `duration`, `latency`): Request status code, latency (ms), and response headers count.
+- **`payload`** (aliases: `request`, `req`, `sent`, `request_body`, `request_headers`): Sent payload body and request headers (with automatic secret masking).
+- **`headers`** (aliases: `response_headers`, `res_headers`): HTTP response headers.
+- **`asserts`** (aliases: `assertions`, `assert`, `tests`): Assertion results and detailed test breakdown.
+- **`body`** (aliases: `response_body`, `res_body`, `response`): Response body (pretty-printed JSON or raw text).
+- **`all`** (aliases: `*`, `full`): Enables all 5 sections.
+
+#### Resolution Hierarchy (Highest Precedence Wins)
+1. **CLI Flag**: `--verbose` forces all sections (`all`).
+2. **Request Spec**: `outputSections` / `output_sections` inside `request:`
+3. **Routine Step**: `outputSections` / `output_sections` inside step definition
+4. **File Level**: `outputSections` / `output_sections` at root of the YAML file
+5. **Global Config**: `outputSections` in `paynal.json` (defaults to all sections)
+
+```yaml
+version: "1"
+name: "filtered_output_example"
+# File-level default for this file:
+outputSections:
+  - status
+  - asserts
+
+steps:
+  - id: "step-1"
+    name: "Only Status & Asserts"
+    request:
+      method: "GET"
+      url: "https://api.example.com/health"
+    assert:
+      status: 200
+
+  - id: "step-2"
+    name: "Detailed Step (Overrides File Level)"
+    outputSections:
+      - status
+      - payload
+      - body
+    request:
+      method: "POST"
+      url: "https://api.example.com/echo"
+      body: '{"message": "hello"}'
+```
+
 ---
 
 ## 🧪 Assertions Reference
@@ -329,11 +377,15 @@ assert:
 | `paynal remove <path>` | `rm`, `del`, `delete` | Deletes files from disk (`--clean`). |
 | `paynal clean <target>` | | Sweeps output directory (`out`) or orphan/temporary files from collections (`project`). |
 | `paynal doc <path>` | | Generates Markdown docs with headers, params, body, auth, captures, and asserts (`--io`). |
+| `paynal req <url>` | `call`, `http`, `inline` | Executes an ad-hoc inline HTTP request with assertions and interpolation (`--save`, `--bearer`, `-H`, `-b`, `--status`, `--assert-json`). |
+| `paynal global <action>` | `dir`, `registry`, `workspace` | Manages and discovers global workspaces across projects (`add`, `list`, `discover`, `show`, `rm`). |
+| `paynal -C <ws> <cmd>` | | Executes any Paynal command inside the context of a registered global workspace. |
 | `paynal export <path>` | | Exports to `curl`, `postman`, or `insomnia` formats (`--type` / `--to`). |
 | `paynal import <path>` | | Imports collections from Bruno (`.bru`), Postman v2.1, or Insomnia v4 (`--out`). |
-| `paynal ui` | `tui` | Launches interactive Terminal User Interface (TUI) dashboard (`-E env`). |
+| `paynal ui` | `tui` | Launches interactive Terminal User Interface (TUI) dashboard (`-E env`, `g` workspace selector). |
 | `paynal mcp` | | Starts Model Context Protocol stdio JSON-RPC server for AI agents. |
 | `paynal man` | | Reads interactive terminal man page or exports roff files (`--out`). |
+| `paynal update` | `upgrade`, `self-update` | Checks for updates and upgrades Paynal to the latest release (`--check`, `-y`/`--yes`). |
 
 ### 📖 Offline UNIX Man Pages
 
@@ -380,6 +432,7 @@ Once installed, AI agents automatically discover the skill and gain the ability 
 - Chain multi-step workflows with variable captures
 - Import collections from Postman, Insomnia, or Bruno
 - Generate API documentation
+- Discover and execute routines across multi-workspace directories
 
 ### MCP Server (Tool Integration)
 
@@ -396,13 +449,16 @@ Run `paynal mcp` to start a Model Context Protocol server over stdio (JSON-RPC 2
 }
 ```
 
-The MCP server exposes three tools:
+The MCP server exposes standard testing and discovery tools:
 
 | Tool | Description |
 | --- | --- |
-| `list_routines` | List all YAML files in the workspace |
-| `execute_routine` | Execute a request/routine by path |
+| `list_routines` | List all YAML files in the local workspace |
+| `execute_routine` | Execute a request/routine by path (supports local path or `@workspace/path`) |
 | `create_routine` | Create a new YAML file with provided content |
+| `list_global_workspaces` | List all registered workspaces in the global directory |
+| `discover_global_routines` | Search and discover routes across all registered workspaces |
+| `execute_inline_request` | Execute an ad-hoc inline HTTP request with optional headers, body, or workspace context |
 
 ---
 
